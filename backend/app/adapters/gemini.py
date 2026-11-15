@@ -27,16 +27,21 @@ class ProviderRateLimitError(ProviderError):
 
 class GeminiResponseAdapter:
     provider_name = "gemini"
+    decision_schema = AgentDecision
 
     def __init__(
         self,
         api_key: str | None = None,
         model: str | None = None,
         timeout_seconds: float | None = None,
+        temperature: float = 0.2,
+        max_output_tokens: int = 500,
     ):
         self.api_key = api_key if api_key is not None else get_gemini_api_key()
         self.model = model or get_gemini_model()
         self.timeout_seconds = timeout_seconds or get_gemini_timeout_seconds()
+        self.temperature = temperature
+        self.max_output_tokens = max_output_tokens
 
     def generate(self, system_instruction: str, prompt: str, agent_id: int | None = None) -> Any:
         if not self.api_key:
@@ -59,9 +64,12 @@ class GeminiResponseAdapter:
                 config=types.GenerateContentConfig(
                     system_instruction=system_instruction,
                     response_mime_type="application/json",
-                    response_schema=AgentDecision,
-                    temperature=0.2,
-                    max_output_tokens=500,
+                    response_json_schema=self.decision_schema.model_json_schema(),
+                    temperature=self.temperature,
+                    max_output_tokens=self.max_output_tokens,
+                    # These short decisions must not lose their output budget to hidden reasoning.
+                    thinking_config=types.ThinkingConfig(thinking_budget=0)
+                    if self.model.removeprefix("models/").startswith("gemini-2.5-flash") else None,
                 ),
             )
             if getattr(response, "parsed", None) is not None:
@@ -84,3 +92,8 @@ class GeminiResponseAdapter:
             close = getattr(client, "close", None)
             if close is not None:
                 close()
+
+
+class GeminiConversationAdapter(GeminiResponseAdapter):
+    from app.schemas.network import RuntimeDecision
+    decision_schema = RuntimeDecision

@@ -1,8 +1,18 @@
 ﻿# Local Python environment and runtime artifacts
 /backend/.venv/
+/.venv/
+**/__pycache__/
+/.pytest_cache/
 /backend/data/*.db
+/backend/data/migration-backups/
+/backend/backups/
+*.db-wal
+*.db-shm
 /backend/**/__pycache__/
 /backend/.pytest_cache/
 /frontend/node_modules/
 /frontend/dist/
 /frontend/.env.local
+/backend/.env
+/deployment/.env
+/deployment/certs/

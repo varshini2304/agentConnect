@@ -1,3 +1,4 @@
+import axios from 'axios'
 import { useCallback, useEffect, useState } from 'react'
 import { apiErrorMessage } from '../api/client'
 
@@ -18,7 +19,7 @@ export function useApiData<T>(loader: () => Promise<T>, deps: unknown[] = []) {
   const reload = useCallback(async () => {
     setLoading(true)
     setError(null)
-    try { setData(await loader()) } catch (reason) { setError(apiErrorMessage(reason)) }
+    try { setData(await loader()) } catch (reason) { if (axios.isAxiosError(reason) && [401, 403, 404].includes(reason.response?.status || 0)) setData(null); setError(apiErrorMessage(reason)) }
     finally { setLoading(false) }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, deps)

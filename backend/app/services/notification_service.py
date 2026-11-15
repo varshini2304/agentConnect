@@ -1,4 +1,4 @@
-﻿"""Idempotent notification creation and retrieval."""
+"""Idempotent notification creation and retrieval."""
 from datetime import datetime, timezone
 
 from sqlalchemy import select
@@ -28,7 +28,8 @@ def create_selected_notifications(
         if not result.selected or result.agent_id == author_id:
             continue
         agent = db.get(Agent, result.agent_id)
-        if agent is None or not agent.is_active or _is_blocked(db, author_id, result.agent_id):
+        if (agent is None or agent.company_id != post.company_id or not agent.is_active
+                or _is_blocked(db, author_id, result.agent_id)):
             continue
         exists = db.scalar(select(Notification.id).where(
             Notification.post_id == post.id,
@@ -37,6 +38,7 @@ def create_selected_notifications(
         if exists is not None:
             continue
         row = Notification(
+            company_id=post.company_id,
             post_id=post.id,
             recipient_agent_id=result.agent_id,
             score=result.final_score,
@@ -54,7 +56,8 @@ def create_selected_notifications(
     return list(db.scalars(
         select(Notification)
         .options(joinedload(Notification.recipient))
-        .where(Notification.post_id == post.id)
+        .where(Notification.post_id == post.id, Notification.company_id == post.company_id,
+               Notification.recipient_agent_id.in_(select(Agent.id).where(Agent.company_id == post.company_id)))
         .order_by(Notification.id)
     ))
 

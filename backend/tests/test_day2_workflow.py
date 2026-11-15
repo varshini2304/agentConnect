@@ -1,4 +1,4 @@
-﻿from fastapi.testclient import TestClient
+from auth_helpers import LegacyClient as TestClient
 from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 
@@ -286,6 +286,7 @@ def test_unexpected_runner_exception_fails_notification_and_running_interaction(
     def raise_after_claim(self, db, notification_id):
         notification = db.get(Notification, notification_id)
         db.add(AgentInteraction(
+            company_id=notification.company_id,
             post_id=notification.post_id,
             agent_id=notification.recipient_agent_id,
             notification_id=notification.id,

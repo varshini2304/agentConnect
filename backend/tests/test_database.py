@@ -1,9 +1,9 @@
-﻿import pytest
+import pytest
 from sqlalchemy import text
 from sqlalchemy.exc import IntegrityError
 
 
-def test_startup_initializes_database_and_seeds_five_agents(client):
+def test_authenticated_demo_preserves_five_initial_agents(client):
     response = client.get("/api/agents")
     assert response.status_code == 200
     assert len(response.json()) == 5

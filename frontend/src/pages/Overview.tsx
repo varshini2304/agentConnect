@@ -52,7 +52,7 @@ export function Overview() {
     <p className="data-scope-note">Post, notification, and interaction counts reflect the pages currently available from the API, not lifetime totals.</p>
 
     <div className="overview-grid">
-      <Card className="overview-main"><div className="section-header"><div><p className="eyebrow">Latest activity</p><h2>Recent posts</h2></div><Link to="/feed" className="text-link">Open feed <ArrowUpRight size={15} /></Link></div>
+      <Card className="overview-main"><div className="section-header"><div><p className="eyebrow">Latest activity</p><h2>Recent posts</h2></div><Link to="/history/posts" className="text-link">Open feed <ArrowUpRight size={15} /></Link></div>
         {data.posts.length ? <div className="post-stack">{data.posts.slice(0, 3).map(post => <PostCard key={post.id} post={post} />)}</div> : <EmptyState title="No posts yet" detail="Run the demo workflow to publish the first post." />}
       </Card>
       <div className="overview-side">
@@ -60,8 +60,8 @@ export function Overview() {
           <div className="workflow-summary"><SummaryRow label="Responded" count={responded} status="responded" /><SummaryRow label="Skipped" count={skipped} status="skipped" /><SummaryRow label="Failed" count={failed} status="failed" /></div>
           <div className="api-health"><span className={`health-dot ${data.health ? 'healthy' : ''}`} />{data.health ? 'API connected' : 'API unavailable'}<span className="health-url">FastAPI</span></div>
         </Card>
-        <Card><div className="section-header"><div><p className="eyebrow">Latest decisions</p><h2>Agent activity</h2></div><Link to="/interactions" className="text-link">View all <ArrowUpRight size={14} /></Link></div>
-          {recentActivity.length ? <div className="activity-list">{recentActivity.map(row => <Link key={row.id} to={`/posts/${row.post_id}`} className="activity-row"><span className={`activity-icon activity-${row.status}`}><Activity size={14} /></span><span className="activity-copy"><strong>{agentNames.get(row.agent_id) || `Agent ${row.agent_id}`}</strong><span>{row.status} · {postTitles.get(row.post_id) || 'View post details'}</span></span><span className="activity-time">{formatDate(row.completed_at || row.started_at)}</span></Link>)}</div> : <EmptyState title="No decisions yet" detail="Agent activity appears after a post enters routing." />}
+        <Card><div className="section-header"><div><p className="eyebrow">Latest decisions</p><h2>Agent activity</h2></div><Link to="/history/interactions" className="text-link">View all <ArrowUpRight size={14} /></Link></div>
+          {recentActivity.length ? <div className="activity-list">{recentActivity.map(row => <Link key={row.id} to={`/history/posts/${row.post_id}`} className="activity-row"><span className={`activity-icon activity-${row.status}`}><Activity size={14} /></span><span className="activity-copy"><strong>{agentNames.get(row.agent_id) || `Agent ${row.agent_id}`}</strong><span>{row.status} · {postTitles.get(row.post_id) || 'View post details'}</span></span><span className="activity-time">{formatDate(row.completed_at || row.started_at)}</span></Link>)}</div> : <EmptyState title="No decisions yet" detail="Agent activity appears after a post enters routing." />}
         </Card>
         <Card><div className="section-header"><div><p className="eyebrow">Conversation</p><h2>Recent comments</h2></div><MessageCircle size={18} className="muted" /></div>
           {comments.length ? <div className="comment-list">{comments.map(comment => <div className="comment-preview" key={comment.id}><div className="comment-avatar">{(agentNames.get(comment.agent_id) || 'A').slice(0, 1)}</div><div><strong>{agentNames.get(comment.agent_id) || `Agent ${comment.agent_id}`}</strong><p>{comment.content}</p><small>{formatDate(comment.created_at)}</small></div></div>)}</div> : <EmptyState title="No comments yet" detail="Comments are shown only when an agent decides to respond." />}

@@ -1,4 +1,4 @@
-﻿"""Post normalization, content hashing, duplicate detection and persistence."""
+"""Post normalization, content hashing, duplicate detection and persistence."""
 import hashlib
 import json
 import unicodedata
@@ -39,12 +39,12 @@ def create_post(db: Session, data: PostCreate) -> tuple[Post, bool]:
     content = _normalize_text(data.content)
     category = _normalize_text(data.category).lower()
     digest = content_hash(author.id, title, content, category)
-    existing = db.scalar(select(Post).options(joinedload(Post.author)).where(Post.content_hash == digest))
+    existing = db.scalar(select(Post).options(joinedload(Post.author)).where(Post.content_hash == digest, Post.company_id == author.company_id))
     if existing is not None:
         return existing, False
 
     post = Post(
-        author_agent_id=author.id, title=title, content=content, category=category,
+        company_id=author.company_id, author_agent_id=author.id, title=title, content=content, category=category,
         content_hash=digest, source_type=data.source_type, source_ref=data.source_ref, author=author,
     )
     db.add(post)
@@ -52,7 +52,7 @@ def create_post(db: Session, data: PostCreate) -> tuple[Post, bool]:
         db.commit()
     except IntegrityError:
         db.rollback()
-        duplicate = db.scalar(select(Post).options(joinedload(Post.author)).where(Post.content_hash == digest))
+        duplicate = db.scalar(select(Post).options(joinedload(Post.author)).where(Post.content_hash == digest, Post.company_id == author.company_id))
         if duplicate is not None:
             return duplicate, False
         raise

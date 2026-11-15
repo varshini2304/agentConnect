@@ -22,7 +22,7 @@ export function PostDetails() {
   const notificationsByAgent = new Map(data.notifications.map(row => [row.recipient_agent_id, row]))
   const interactionsByAgent = new Map(data.interactions.map(row => [row.agent_id, row]))
   return <>
-    <Link to="/feed" className="back-link"><ArrowLeft size={15} /> Back to feed</Link>
+    <Link to="/history/posts" className="back-link"><ArrowLeft size={15} /> Back to feed</Link>
     <PageHeading eyebrow={`Post #${data.id} · ${data.source_type}`} title="Post intelligence" description="Backend routing, notifications, decisions, and comments for this post." />
     {state?.demo && <div className={`banner ${state.missingKey ? 'banner-warning' : 'banner-success'}`}><strong>{state.created ? 'Demo post created.' : 'Existing demo post loaded.'}</strong> Routing and notifications were handled by the backend.{state.missingKey && ' Agent response generation failed because GEMINI_API_KEY is not configured; these failed interactions are persisted and retryable.'}</div>}
     {state?.published && <div className="banner banner-success">Post published and routed by the backend. Results below reflect persisted state.</div>}

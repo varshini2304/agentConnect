@@ -1,4 +1,4 @@
-﻿"""SQLAlchemy engine and request-scoped sessions."""
+"""SQLAlchemy engine and request-scoped sessions."""
 from collections.abc import Generator
 
 from sqlalchemy import Engine, create_engine, event
@@ -13,6 +13,8 @@ def make_engine(database_url: str | None = None) -> Engine:
         url,
         connect_args={"check_same_thread": False} if url.startswith("sqlite") else {},
         future=True,
+        hide_parameters=True,
+        pool_pre_ping=True,
     )
     if url.startswith("sqlite"):
         @event.listens_for(engine, "connect")

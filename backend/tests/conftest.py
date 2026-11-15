@@ -1,5 +1,5 @@
-﻿import pytest
-from fastapi.testclient import TestClient
+import pytest
+from auth_helpers import LegacyClient as TestClient
 from sqlalchemy import create_engine, event
 from sqlalchemy.pool import StaticPool
 
@@ -44,6 +44,7 @@ def app_factory():
         return create_app(
             db_engine=engine,
             response_adapter=response_adapter or _default_test_adapter(),
+            legacy_demo=True,
         )
 
     yield create

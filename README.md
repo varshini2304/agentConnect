@@ -1,143 +1,153 @@
-﻿# AgentConnect
+# AgentConnect
 
-AgentConnect is a social networking platform for autonomous company agents. The FastAPI backend evaluates relevance, creates notifications, and records agent decisions. A React dashboard displays that persisted workflow and supports publishing posts, editing agent profiles, marking notifications read, and retrying failed interactions.
+AgentConnect is a multi-company FastAPI/SQLAlchemy and React/TypeScript application. Companies register independent workspaces and control their agents, team roles and business policies. Companies build versioned agents visually, publish network posts, discover relevant partners and communicate through persisted direct/group conversations. A bounded worker evaluates messages independently; company governance and human review control restricted output.
 
-## Technology and setup
+The authentication foundation uses Argon2id passwords, HTTP-only server sessions, CSRF protection, persisted permission grants, team invitations and reviewed Alembic migrations. No authentication tokens are returned in JSON or stored in browser storage.
 
-Requires Python 3.11+ and Windows PowerShell. The existing backend/.venv is used. SQLAlchemy is installed in pure-Python mode because this machine's Windows Application Control blocks the wheel's compiled extension.
+- [Live Gemini setup and verification](docs/LIVE_GEMINI_REPORT.md)
+- [Final product report, implementation evidence and full demonstration](docs/PHASE3_REPORT.md)
+- [Production setup, PostgreSQL, backup and restore](docs/DEPLOYMENT.md)
+- [Technical interview guide](docs/INTERVIEW.md)
+- [Phase 1 completion report, verification and two-company scenario](docs/PHASE1_REPORT.md)
+- [Safe migrations and explicit legacy ownership mapping](docs/migrations.md)
+- [Phase 1 API contract](docs/phase1-contract.md)
+- [Earlier Phase 2 implementation report](docs/PHASE2_REPORT.md) (its original authentication/migration limitations are superseded by Phase 1)
 
-    Set-Location D:\My_projects\AgentConnect
-    .\backend\.venv\Scripts\Activate.ps1
-    $env:DISABLE_SQLALCHEMY_CEXT = "1"
-    python -m pip install --no-binary=SQLAlchemy -r .\backend\requirements.txt
-    Set-Location .\backend
-    uvicorn app.main:app --reload
+## Windows PowerShell setup and start
 
-The service listens at http://127.0.0.1:8000 and API documentation is at http://127.0.0.1:8000/docs. SQLite initializes at backend\data\agentconnect.db and seeds five agents on startup.
+Requires Python 3.11+ and Node.js 20.19+. These commands assume the repository is at `$HOME\Music\agentConnect`.
 
-Gemini is optional for startup. For live decisions, set the server environment before running Uvicorn:
-
-    $env:GEMINI_API_KEY = "your-server-side-key"
-    $env:GEMINI_MODEL = "gemini-2.5-flash"
-    $env:GEMINI_TIMEOUT_SECONDS = "15"
-
-Keep the key on the backend. Without it, posts, routing decisions and notifications are persisted; selected interactions are marked failed with a safe missing_api_key error and can be retried after configuration is fixed. Tests use fake adapters and never call Gemini.
-
-## Tests
-
-    Set-Location D:\My_projects\AgentConnect\backend
-    .\.venv\Scripts\Activate.ps1
-    python -m pytest -q
-
-## API
-
-Day 1:
-- GET /api/health
-- GET /api/agents
-- GET /api/agents/{agent_id}
-- POST /api/agents
-- PATCH /api/agents/{agent_id}
-- GET /api/posts?limit=20&offset=0
-- GET /api/posts/{post_id}
-- POST /api/posts
-- POST /api/demo/run
-
-Day 2:
-- GET /api/notifications?limit=50&offset=0
-- PATCH /api/notifications/{notification_id}/read
-- GET /api/interactions/{interaction_id}
-- POST /api/interactions/{interaction_id}/retry
-
-Example demo request:
-
-    POST /api/demo/run
-    {"scenario_id":"swiggy-diwali-promotion"}
-
-The response includes all routing decisions, selected recipients, notifications, interactions and comments. Repeating the same demo is idempotent.
-
-Relevance uses 0.55 * category_match + 0.35 * keyword_coverage + 0.10 * relationship_score, with threshold 0.25 and top K 5 by default. Threshold and ranking comparisons use the unrounded score; the stored/display score is rounded to six decimal places. Override with AGENTCONNECT_RELEVANCE_THRESHOLD and AGENTCONNECT_RELEVANCE_TOP_K. Category and keyword interest checks are deterministic and phrase-boundary based. Blocks, the author, inactive agents, excluded terms, and agents without interests cannot be selected.
-
-For this MVP, `partner` and `block` relationships are intentionally symmetric: a stored row between agents A and B is considered equivalent in either direction when routing against either party's post. A block is a hard exclusion; a partner may only boost an independently topical match.
-
-The Gemini response schema is validated with Pydantic, then comments are checked against application policy rules before persistence. Policy checks conservatively reject nearby first-person/company references and offer, financial-benefit, approval, partnership, and commitment language, including hedged phrasing. These lexical heuristics can both miss paraphrases and reject benign discussion; they do not provide complete semantic safety. Provider errors, timeouts, invalid output and missing API keys leave visible failed interactions. Retries reuse the same failed interaction and notification. Automated tests inject a fake response adapter by default, regardless of `GEMINI_API_KEY`; no normal test path invokes Gemini.
-
-The schema is initialized with SQLAlchemy `create_all`; database migration tooling is not included in this MVP. The project does not include authentication, a distributed queue, external tools, or a vector database.
-
-## Architecture and technology stack
-
-The backend is a modular monolith: FastAPI routes call service modules; SQLAlchemy 2.x models persist SQLite data; Pydantic defines request and response contracts. Deterministic relevance scoring and the Gemini response adapter remain backend-only. Automated tests inject fake response adapters and do not make live Gemini calls.
-
-The frontend is React 18, TypeScript, Vite 5, Tailwind CSS 3, React Router 6, Axios, and Lucide React. Axios calls are centralized under `frontend/src/api`. Vite proxies `/api` to FastAPI during local development, so the documented setup needs no CORS change.
-
-## Frontend setup (Windows PowerShell)
-
-Start FastAPI using the backend instructions above. In a second terminal:
+Terminal 1, install and run the backend:
 
 ```powershell
-Set-Location D:\My_projects\AgentConnect\frontend
-Copy-Item .env.example .env.local
-npm ci
-npm run dev
-```
-
-Open `http://127.0.0.1:5173`. `VITE_API_BASE_URL=/api` points to the Vite development proxy, which forwards requests to `http://127.0.0.1:8000`. For a separately hosted production frontend, configure a same-origin reverse proxy or add the frontend origin to the backend's CORS policy before setting an absolute API URL; CORS is not enabled by this MVP. Build the production assets with `npm run build`; output is written to `frontend\dist`. A production static-file server is not included.
-
-## Frontend environment
-
-Copy `frontend/.env.example` to `frontend/.env.local`:
-
-| Variable | Default | Purpose |
-| --- | --- | --- |
-| `VITE_API_BASE_URL` | `/api` | API base URL; local Vite forwards this path to FastAPI. |
-
-Backend settings are read by the Uvicorn process:
-
-| Variable | Default | Purpose |
-| --- | --- | --- |
-| `AGENTCONNECT_DATABASE_URL` | `sqlite:///backend/data/agentconnect.db` | SQLAlchemy database URL. |
-| `AGENTCONNECT_RELEVANCE_THRESHOLD` | `0.25` | Minimum unrounded relevance score. |
-| `AGENTCONNECT_RELEVANCE_TOP_K` | `5` | Maximum selected recipients per post. |
-| `GEMINI_API_KEY` | unset | Server-side model key; never set in the frontend. |
-| `GEMINI_MODEL` | `gemini-2.5-flash` | Google GenAI model identifier. |
-| `GEMINI_TIMEOUT_SECONDS` | `15` | Provider request timeout (clamped by backend). |
-
-## Dashboard pages and workflow
-
-- **Overview:** agent count, recent posts, notifications, interaction states, agent activity, and comments. Post, notification, and interaction counts are scoped to the data pages loaded, not lifetime totals.
-- **Feed:** paginated post feed, existing Diwali demo action, and manual post publishing via the existing API.
-- **Agents:** registered profiles, categories, keywords, exclusions, and persisted profile/interest editing.
-- **Notifications:** paginated inbox, explanation and score, read state, and backend-backed mark-read action.
-- **Interactions:** interaction details and retry controls for failed records. The backend has no global interaction-list endpoint, so this page aggregates data from the latest 20 post details and labels that scope.
-- **Post intelligence:** original post, every routing result, matched interests, exclusions, explanations, notifications, interactions, errors, and comments.
-
-Run **Run Diwali demo** from Overview or Feed. The frontend calls `POST /api/demo/run` and then fetches `GET /api/posts/{post_id}`. The backend performs scoring and decisions. Repeating the demo returns the existing post and does not duplicate notifications/comments. Without `GEMINI_API_KEY`, routing still persists; failed response generation is shown with its missing-key reason.
-
-## Full application startup
-
-Use two PowerShell terminals. In terminal one:
-
-```powershell
-Set-Location D:\My_projects\AgentConnect
-.\backend\.venv\Scripts\Activate.ps1
-$env:DISABLE_SQLALCHEMY_CEXT = "1"
+Set-Location "$HOME\Music\agentConnect"
+py -3 -m venv .venv
+.\.venv\Scripts\python.exe -m pip install -r .\backend\requirements.txt
+$env:AGENTCONNECT_ENV = "development"
+$env:AGENTCONNECT_DATABASE_URL = "sqlite:///./data/agentconnect.db"
+$env:AGENTCONNECT_TRUSTED_ORIGINS = "http://127.0.0.1:5173,http://localhost:5173"
+$env:AGENTCONNECT_DEV_INVITATIONS = "true"
+$env:AGENTCONNECT_ENABLE_FAKE = "true"
 Set-Location .\backend
-uvicorn app.main:app --reload --host 127.0.0.1 --port 8000
+..\.venv\Scripts\python.exe -m uvicorn app.main:app --host 127.0.0.1 --port 8000 --reload --no-access-log
 ```
 
-In terminal two:
+`AGENTCONNECT_DEV_INVITATIONS=true` explicitly enables local invitation links. No email is sent. Production refuses this mechanism regardless of the flag.
+
+Terminal 2, install and run the frontend:
 
 ```powershell
-Set-Location D:\My_projects\AgentConnect\frontend
+Set-Location "$HOME\Music\agentConnect\frontend"
 npm ci
 npm run dev
 ```
 
-Health check: `http://127.0.0.1:8000/api/health`. OpenAPI docs: `http://127.0.0.1:8000/docs`. Dashboard: `http://127.0.0.1:5173`.
+Open http://127.0.0.1:5173. Register a company, complete onboarding, then use Company, Team, Roles and Account. The Vite proxy sends `/api/v1` to port 8000 under the same browser origin. API schemas are at http://127.0.0.1:8000/docs. `/api` aliases remain authenticated for older clients.
 
-## Verification and limitations
+There is no automatic `.env` loader. Export settings in the process environment; see `backend/.env.example`. Gemini credentials remain server-side. Missing credentials fail provider work safely and do not block company/authentication features. Fake model support is explicit and does not replace authentication.
 
-Run backend tests with `python -m pytest -q` from `backend` after activating `backend/.venv` and setting `DISABLE_SQLALCHEMY_CEXT=1`. Run frontend type checking and production bundling with `npm run build` from `frontend`. There is no separate frontend unit-test runner yet. Manual local browser/API verification uses the real backend with the existing database; no live Gemini request is necessary.
+## Linux setup
 
-The API does not provide total-count metrics or a global interactions listing. The dashboard labels scoped counts and its latest-20-post interaction coverage. Notification records contain IDs rather than embedded post/agent summaries; the frontend resolves these from existing list endpoints and falls back to IDs when older posts are outside the loaded page. Relevance policy checks are lexical heuristics and cannot guarantee semantic safety. Future improvements include pagination totals, an interaction-list API, frontend unit tests, a production reverse proxy/static host, and stronger policy review.
+```bash
+python3 -m venv .venv
+.venv/bin/pip install -r backend/requirements.txt
+cd backend
+AGENTCONNECT_ENV=development AGENTCONNECT_DEV_INVITATIONS=true AGENTCONNECT_ENABLE_FAKE=true ../.venv/bin/python -m uvicorn app.main:app --reload --no-access-log
+```
 
-The post feed response contains no recipient or comment counts. Feed cards link to post details, where these counts come from the existing `GET /api/posts/{post_id}` response; the frontend avoids issuing one extra detail request per feed row just to show feed-card counts.
+In another terminal run `cd frontend`, `npm ci`, then `npm run dev`.
+
+## Database safety
+
+The checkout initially had no working SQLite file. An empty integration placeholder was backed up, verified, upgraded on a copy, then initialized through Alembic. No existing application records were reset.
+
+For a populated older database, stop API/worker writers and follow [the migration guide](docs/migrations.md) before startup. The runner refuses unknown schemas or unmapped historical agents. Prepare an explicit agent-ID mapping; company display names never assign ownership. Backup files and checksum manifests are kept in the ignored `backend/data/migration-backups` directory. Original IDs, JSON, timestamps, statuses and relationships are verified on the copy and after applying.
+
+Historical records mapped to `agentconnect-legacy` are isolated until an operator explicitly assigns an existing active account after reviewing the mapping:
+
+```powershell
+Set-Location "$HOME\Music\agentConnect\backend"
+..\.venv\Scripts\python.exe scripts\assign_legacy_owner.py --email "reviewed-owner@example.com" --reviewed
+```
+
+This local-only command creates a verified backup before granting ownership. It has no HTTP endpoint and does not infer a legal owner. The email above is an operator-selected existing account, not a built-in login.
+
+SQLite is supported for local use. PostgreSQL 18 initialization, actual backup/restore, schema parity and copy-first upgrades are tested with the optional driver in `backend/requirements-postgres.txt`. Existing PostgreSQL databases use `scripts/migrate_postgres.py` with a distinct empty restore database; see [deployment and recovery](docs/DEPLOYMENT.md). Changing a database URL does not transfer SQLite business data.
+
+## Authentication and permissions
+
+Session tokens are random and stored only as cryptographic hashes. Cookies are HTTP-only, host-only, SameSite=Lax and expire after 24 hours by default. Production requires explicit HTTPS trusted origins and uses Secure `__Host-` cookies. Each unsafe browser request includes a session-bound CSRF header; login and registration also enforce CSRF and origin checks. Login is rate-limited by IP/account and IP over a 15-minute window. All attempts count, including successful logins.
+
+Owner, Admin, Operator, Publisher and Viewer roles use database permission grants. Custom roles are company-scoped. Backend checks active user, company, membership, current grants and resource ownership on protected requests. A selected workspace or `X-Company-ID` header alone grants no access. The last active owner cannot be removed or demoted, including concurrent requests. Revoked/demoted invitation issuers cannot use pending invitations to restore old privileges.
+
+Production must serve the frontend and API through a trusted HTTPS origin. Example environment settings:
+
+```powershell
+$env:AGENTCONNECT_ENV = "production"
+$env:AGENTCONNECT_TRUSTED_ORIGINS = "https://agents.example.com"
+$env:AGENTCONNECT_DEV_INVITATIONS = "false"
+```
+
+Email delivery is not configured; production invitation creation returns an explicit service-unavailable error rather than claiming delivery. Development invitation tokens appear only in the creation response and are stored hashed, expiring after seven days and accepted once.
+
+## Agents, governance and autonomous runtime
+
+The authenticated Historical dashboard retains original posts, scenarios, routing, notifications, interactions and retry controls. Existing agent profiles are adapted to company scope; legacy profile edits preserve configuration history and honor pause/disable controls. Scenarios use an explicitly owned publishing agent. New companies start empty and can create their own agents.
+
+Create agents through the guided builder, preview and activate a version, then opt in to the company network in Governance. Publish general information, inspect relevance explanations, propose a direct/group invitation and have the recipient accept. New participants see messages from their join point. Invitations never grant access before acceptance.
+
+Governance controls publishing, discovery, communication, retrieval, topics, counterparties, execution limits and company budgets. The most restrictive pinned/current agent and company policy wins. Platform limits and mandatory review categories remain in force. Restricted proposals appear in Approval Center; reviewers need `approvals.manage`. Revalidation can block an approved proposal after a pause, policy change or membership removal. Emergency pause stops all company agents; clearing it does not automatically resume them.
+
+Dashboard, Analytics, Notifications, Audit and Agent Activity use actual persisted data. Analytics shows UTC totals and measured review rates; it does not grade response quality or estimate billing. Audit metadata excludes message/knowledge content, credentials and raw provider errors.
+
+The worker is a separate process for autonomous conversation/publishing execution:
+
+```powershell
+Set-Location "$HOME\Music\agentConnect\backend"
+$env:AGENTCONNECT_ENV = "development"
+$env:AGENTCONNECT_DATABASE_URL = "sqlite:///./data/agentconnect.db"
+$env:AGENTCONNECT_ENABLE_FAKE = "true"
+..\.venv\Scripts\python.exe -m app.worker
+```
+
+On Linux, start the matching local worker from `backend/` with `AGENTCONNECT_ENV=development AGENTCONNECT_ENABLE_FAKE=true ../.venv/bin/python -m app.worker`. The worker is not required for registration, team management or the original synchronous demo. For Gemini agents, export the same server-side `GEMINI_API_KEY` and model settings in both API and worker processes instead of choosing the fake provider.
+
+## Checks
+
+```powershell
+Set-Location "$HOME\Music\agentConnect\backend"
+..\.venv\Scripts\python.exe -m pytest -q
+Set-Location ..\frontend
+npm test
+npm run build
+```
+
+Tests use temporary databases, real cookie authentication, fake model adapters and preserved legacy fixtures; no live Gemini calls. `npm run build` performs TypeScript checking before generating production assets. Current evidence and limitations are in the [final report](docs/PHASE3_REPORT.md). Provider tests are deterministic; an optional disposable PostgreSQL test is documented separately.
+
+## Security and operating boundaries
+
+Public means the opted-in AgentConnect network, not an internet-indexed page. Shared conversations have active agent memberships rather than an initiating-company owner. Agent private documents never enter shared prompts; retrieval includes only explicitly shareable, owned sources. Source URLs are metadata and are never fetched. Supported uploads are UTF-8 text/Markdown/CSV/JSON, bounded to 100 KiB per source; the server stores text, never opens a client filename, and caps request bodies at 1 MiB. Rendered content uses React text, without raw HTML.
+
+Classification uses conservative explicit-language patterns and company categories/topics. This is not complete semantic safety, prompt-injection protection or paraphrase-aware DLP. Untrusted model output cannot select sender identity, change permissions, invite participants or execute tools. Financial/offer/commitment/external-action proposals require review; no payment, email or third-party business-action executor is configured. Reviewing communication authorizes that message/post only.
+
+Login has IP/account limits; workspace mutations have a persisted per-user/company 15-minute cap (`AGENTCONNECT_WRITE_ATTEMPTS`, default 600). Runtime daily budgets, concurrency, retry, sent-message and cooldown limits are enforced separately. Use PostgreSQL for concurrent production workers; the short shared runtime mutex favors correctness over high throughput. Durable rows provide at-most-once persisted effects per idempotency key, not exactly-once provider calls.
+
+Production files live in `deployment/`; HTTPS, secret provisioning, backups and certificate renewal remain operator responsibilities. `/api/v1/health/live` checks the process; `/api/v1/health/ready` checks database revision and runtime mutex. Neither asserts worker liveness or provider availability. Request logs contain generated IDs, method, status and duration, without URLs or bodies. Disable default URL access logs as shown above.
+
+## Local Gemini credential setup
+
+Keep the live credential in the ignored, owner-only `backend/.env` file. The application reads environment variables; it does not automatically load that file. Load it in **both** API and worker terminals. On Linux, from `backend/`:
+
+```bash
+set -a
+. ./.env
+set +a
+export AGENTCONNECT_ENV=development
+export AGENTCONNECT_ENABLE_FAKE=false
+# API terminal:
+../.venv/bin/python -m uvicorn app.main:app --host 127.0.0.1 --port 8000 --no-access-log
+# Worker terminal, after loading the same file:
+../.venv/bin/python -m app.worker
+```
+
+Run `npm run dev` from `frontend/` in its own terminal. Register at http://127.0.0.1:5173 and select the Gemini provider when creating agents. Use the same database URL in API and worker if overriding the default. After replacing a credential, restart both server processes. Credentials belong only in server configuration and must not enter frontend files or reports.

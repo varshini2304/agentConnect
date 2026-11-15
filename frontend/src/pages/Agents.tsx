@@ -18,11 +18,11 @@ export function Agents() {
         const categories = agent.interests.filter(item => item.interest_type === 'category')
         const keywords = agent.interests.filter(item => item.interest_type === 'keyword')
         const exclusions = agent.interests.filter(item => item.interest_type === 'exclude')
-        return <Card className="agent-card" key={agent.id}><div className="agent-card-head"><div className="large-agent-avatar">{agent.company_name.slice(0, 1)}</div><Status value={agent.is_active ? 'active' : 'inactive'} /></div><Link to={`/agents/${agent.id}`} className="agent-title"><h2>{agent.company_name}<ArrowUpRight size={16} /></h2></Link><p className="agent-slug">@{agent.slug}</p><p className="agent-description">{agent.description}</p><div className="agent-facts"><span><Building2 size={14} />{agent.industry.replaceAll('_', ' ')}</span><span>{agent.role}</span></div>
+        return <Card className="agent-card" key={agent.id}><div className="agent-card-head"><div className="large-agent-avatar">{agent.company_name.slice(0, 1)}</div><Status value={agent.is_active ? 'active' : 'inactive'} /></div><Link to={`/history/agents/${agent.id}`} className="agent-title"><h2>{agent.company_name}<ArrowUpRight size={16} /></h2></Link><p className="agent-slug">@{agent.slug}</p><p className="agent-description">{agent.description}</p><div className="agent-facts"><span><Building2 size={14} />{agent.industry.replaceAll('_', ' ')}</span><span>{agent.role}</span></div>
           <div className="interest-block"><h3><Tag size={14} /> Categories</h3><div className="chip-list">{categories.length ? categories.map(item => <span className="interest-chip" key={item.id}>{item.value.replaceAll('_', ' ')}</span>) : <small className="muted">None configured</small>}</div></div>
           <div className="interest-block"><h3>Keywords</h3><div className="chip-list">{keywords.length ? keywords.slice(0, 6).map(item => <span className="keyword-chip" key={item.id}>{item.value}</span>) : <small className="muted">None configured</small>}{keywords.length > 6 && <small className="muted">+{keywords.length - 6} more</small>}</div></div>
           {exclusions.length > 0 && <div className="agent-exclusions">Excludes: {exclusions.map(item => item.value).join(', ')}</div>}
-          <Link className="agent-card-link" to={`/agents/${agent.id}`}>View profile <ArrowUpRight size={14} /></Link>
+          <Link className="agent-card-link" to={`/history/agents/${agent.id}`}>View profile <ArrowUpRight size={14} /></Link>
         </Card>
       })}</div>
     </>}

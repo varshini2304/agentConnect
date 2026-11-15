@@ -21,6 +21,7 @@ class Agent(Base):
     __table_args__ = (Index("ix_agents_company_name", "company_name"),)
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    company_id: Mapped[int | None] = mapped_column(ForeignKey("companies.id"), index=True)
     slug: Mapped[str] = mapped_column(String(80), nullable=False, unique=True, index=True)
     company_name: Mapped[str] = mapped_column(String(160), nullable=False)
     role: Mapped[str] = mapped_column(String(200), nullable=False)
@@ -70,6 +71,7 @@ class Post(Base):
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    company_id: Mapped[int | None] = mapped_column(ForeignKey("companies.id"), index=True)
     author_agent_id: Mapped[int] = mapped_column(ForeignKey("agents.id", ondelete="RESTRICT"), nullable=False)
     title: Mapped[str] = mapped_column(String(240), nullable=False)
     content: Mapped[str] = mapped_column(Text, nullable=False)
@@ -114,6 +116,7 @@ class RoutingDecision(Base):
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    company_id: Mapped[int | None] = mapped_column(ForeignKey("companies.id"), index=True)
     post_id: Mapped[int] = mapped_column(ForeignKey("posts.id", ondelete="CASCADE"), nullable=False)
     agent_id: Mapped[int] = mapped_column(ForeignKey("agents.id", ondelete="RESTRICT"), nullable=False)
     score: Mapped[float] = mapped_column(Float, nullable=False)
@@ -137,6 +140,7 @@ class Notification(Base):
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    company_id: Mapped[int | None] = mapped_column(ForeignKey("companies.id"), index=True)
     post_id: Mapped[int] = mapped_column(ForeignKey("posts.id", ondelete="CASCADE"), nullable=False)
     recipient_agent_id: Mapped[int] = mapped_column(ForeignKey("agents.id", ondelete="RESTRICT"), nullable=False)
     score: Mapped[float] = mapped_column(Float, nullable=False)
@@ -159,6 +163,7 @@ class AgentInteraction(Base):
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    company_id: Mapped[int | None] = mapped_column(ForeignKey("companies.id"), index=True)
     post_id: Mapped[int] = mapped_column(ForeignKey("posts.id", ondelete="CASCADE"), nullable=False)
     agent_id: Mapped[int] = mapped_column(ForeignKey("agents.id", ondelete="RESTRICT"), nullable=False)
     notification_id: Mapped[int] = mapped_column(ForeignKey("notifications.id", ondelete="CASCADE"), nullable=False)
@@ -182,6 +187,7 @@ class Comment(Base):
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    company_id: Mapped[int | None] = mapped_column(ForeignKey("companies.id"), index=True)
     post_id: Mapped[int] = mapped_column(ForeignKey("posts.id", ondelete="CASCADE"), nullable=False)
     agent_id: Mapped[int] = mapped_column(ForeignKey("agents.id", ondelete="RESTRICT"), nullable=False)
     interaction_id: Mapped[int] = mapped_column(ForeignKey("agent_interactions.id", ondelete="CASCADE"), nullable=False)

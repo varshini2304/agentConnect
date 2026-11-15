@@ -25,7 +25,7 @@ export function PublishPostDialog({ onClose }: { onClose: () => void }) {
       const result = await publishPost(payload)
       const detail = await getPost(result.post.id)
       onClose()
-      navigate(`/posts/${detail.id}`, { state: { published: result.created, existing: !result.created } })
+      navigate(`/history/posts/${detail.id}`, { state: { published: result.created, existing: !result.created } })
     } catch (reason) { setError(apiErrorMessage(reason)) }
     finally { setBusy(false) }
   }

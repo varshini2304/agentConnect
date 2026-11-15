@@ -1,4 +1,4 @@
-﻿"""Database boundary for pure relevance scoring and explanation persistence."""
+"""Database boundary for pure relevance scoring and explanation persistence."""
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, selectinload
@@ -12,17 +12,23 @@ from app.services.relevance import (
 
 
 def evaluate_and_persist_routing(db: Session, post: Post) -> list[ScoringResult]:
-    stored = list(db.scalars(
-        select(RoutingDecision).where(RoutingDecision.post_id == post.id)
-        .order_by(RoutingDecision.agent_id)
-    ))
+    owned_agents = select(Agent.id).where(Agent.company_id == post.company_id)
+    stored_query = select(RoutingDecision).where(
+        RoutingDecision.post_id == post.id, RoutingDecision.company_id == post.company_id,
+        RoutingDecision.agent_id.in_(owned_agents),
+    ).order_by(RoutingDecision.agent_id)
+    stored = list(db.scalars(stored_query))
     if stored:
         return [ScoringResult(**row.reason_json) for row in stored]
 
     agents = list(db.scalars(
-        select(Agent).options(selectinload(Agent.interests)).order_by(Agent.id)
+        select(Agent).options(selectinload(Agent.interests))
+        .where(Agent.company_id == post.company_id).order_by(Agent.id)
     ))
-    relationships = list(db.scalars(select(AgentRelationship)))
+    relationships = list(db.scalars(select(AgentRelationship).where(
+        AgentRelationship.source_agent_id.in_(owned_agents),
+        AgentRelationship.target_agent_id.in_(owned_agents),
+    )))
     post_profile = PostProfile(
         id=post.id, author_agent_id=post.author_agent_id, title=post.title,
         content=post.content, category=post.category,
@@ -47,17 +53,14 @@ def evaluate_and_persist_routing(db: Session, post: Post) -> list[ScoringResult]
     )
     for result in results:
         db.add(RoutingDecision(
-            post_id=post.id, agent_id=result.agent_id, score=result.final_score,
+            company_id=post.company_id, post_id=post.id, agent_id=result.agent_id, score=result.final_score,
             eligible=result.eligible, selected=result.selected, reason_json=result.to_dict(),
         ))
     try:
         db.commit()
     except IntegrityError:
         db.rollback()
-        stored = list(db.scalars(
-            select(RoutingDecision).where(RoutingDecision.post_id == post.id)
-            .order_by(RoutingDecision.agent_id)
-        ))
+        stored = list(db.scalars(stored_query))
         if stored:
             return [ScoringResult(**row.reason_json) for row in stored]
         raise

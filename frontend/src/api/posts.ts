@@ -11,4 +11,4 @@ export const publishPost = async (post: PostCreate) => {
   const saved = expectRecord<Post>(response.data, validPostSummary, 'published post')
   return { post: saved, created: response.status === 201 }
 }
-export const runDemo = async (scenario_id = 'swiggy-diwali-promotion') => expectRecord<DemoResponse>((await api.post('/demo/run', { scenario_id })).data, row => typeof row.scenario_id === 'string' && typeof row.created === 'boolean' && !!row.post && typeof (row.post as PostDetail).id === 'number', 'demo workflow')
+export const runDemo = async (scenario_id: string, author_agent_id?: number) => expectRecord<DemoResponse>((await api.post('/demo/run', { scenario_id, ...(author_agent_id ? { author_agent_id } : {}) })).data, row => typeof row.scenario_id === 'string' && typeof row.created === 'boolean' && !!row.post && typeof (row.post as PostDetail).id === 'number', 'demo workflow')

@@ -1,0 +1,12 @@
+**
+!backend
+!backend/app
+!backend/app/**
+!backend/migrations
+!backend/migrations/**
+!backend/scripts
+!backend/scripts/**
+!backend/requirements*.txt
+!backend/alembic.ini
+**/__pycache__
+**/*.pyc
