@@ -1,4 +1,4 @@
-﻿# Local Python environment and runtime artifacts
+# Local Python environment and runtime artifacts
 /backend/.venv/
 /.venv/
 **/__pycache__/
@@ -16,3 +16,11 @@
 /backend/.env
 /deployment/.env
 /deployment/certs/
+
+# Local notes and development-tool caches
+/docs/
+/.agents/
+/.codex/
+/.sf/
+/.dist/
+/.aws/

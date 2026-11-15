@@ -32,9 +32,9 @@ Stop API and worker writers. Existing SQLite files use online backups, writer lo
 ../.venv/bin/python scripts/migrate.py --database data/agentconnect.db --backup-dir data/migration-backups --apply
 ```
 
-Add `--mapping ../docs/legacy-mapping.example.json` only when upgrading older unowned Day 2/Phase 2 agents, after explicitly reviewing every ownership mapping. A Phase 1 (`0003_phase1`) database requires no mapping for the additive Phase 3 migration. Originals, IDs, sessions, memberships, historical messages, attempts, JSON and timestamps remain in place. Pending legacy run approvals gain unified inbox records with a 24-hour review deadline; their original rows are retained. Draft publications are not inferred to be approval requests.
+Add `--mapping migrations/legacy-mapping.example.json` only when upgrading older unowned Day 2/Phase 2 agents, after explicitly reviewing every ownership mapping. A Phase 1 (`0003_phase1`) database requires no mapping for the additive Phase 3 migration. Originals, IDs, sessions, memberships, historical messages, attempts, JSON and timestamps remain in place. Pending legacy run approvals gain unified inbox records with a 24-hour review deadline; their original rows are retained. Draft publications are not inferred to be approval requests.
 
-The CLI defaults to a dry run. Backups, dry-run files and manifests have restricted permissions. The manifest contains counts/checksums, not historical content or password hashes. Keep a protected off-host copy of the backup. See [the detailed legacy migration guide](migrations.md) for ownership and restore boundaries.
+The CLI defaults to a dry run. Backups, dry-run files and manifests have restricted permissions. The manifest contains counts/checksums, not historical content or password hashes. Keep a protected off-host copy of the backup. See [the detailed legacy migration guide](../backend/migrations/README.md) for ownership and restore boundaries.
 
 ## PostgreSQL upgrade and backup proof
 
@@ -54,15 +54,13 @@ cd backend
 
 Change `AGENTCONNECT_RESTORE_DATABASE_URL` to the newly provisioned empty database before the apply command. For containerized operation, use `docker compose run --rm --no-deps` with the backend image, an explicitly mounted writable protected backup directory, and those two environment variables. Provision the restore database through your database administrator; do not give the normal application role elevated privileges.
 
-The runner takes a migration advisory lock and table locks that exclude writers. It creates an owner-only custom-format archive, restores it with error-on-first-failure, compares all original tables/column values, upgrades that restored copy and compares them again. Only `--apply` upgrades the source, in the held transaction. Unknown/partial schemas and nonempty restore targets are refused; no database is reset or dropped. Restore copies deliberately remain for operator inspection. Use matching backup-client and server majors: an observed PostgreSQL 18 client archive could not be restored into PostgreSQL 16 because its session settings differ. See [PostgreSQL's restore options](https://www.postgresql.org/docs/18/app-pgrestore.html).
+The runner takes a migration advisory lock and table locks that exclude writers. It creates an owner-only custom-format archive, restores it with error-on-first-failure, compares all original tables/column values, upgrades that restored copy and compares them again. Only `--apply` upgrades the source, in the held transaction. Unknown/partial schemas and nonempty restore targets are refused; no database is reset or dropped. Restore copies deliberately remain for operator inspection. Use matching backup-client and server major versions; archives can include session settings unsupported by older servers. See [PostgreSQL's restore options](https://www.postgresql.org/docs/18/app-pgrestore.html).
 
 On failure, keep writers stopped and inspect the protected backup and copy. For recovery, restore the verified archive into a newly provisioned recovery database, verify its schema/counts and application behavior, then change the application URL. For SQLite, stop every process and restore the verified backup file while preserving the failed file separately; never leave old WAL/SHM sidecars beside a restored database. Downgrades are refused because they could destroy governance history. Do not run `docker compose down -v` against a database whose data you need.
 
 ## Verification boundaries
 
 Migration acceptance covers clean SQLite initialization, populated Day 2/Phase 2/Phase 1 copies, dry runs, corruption/refusal, WAL backups, foreign keys and application-schema parity. A separate live PostgreSQL 18 acceptance test exercises baseline initialization, a populated backup, actual `pg_restore`, copy-first upgrade/apply, idempotency and PostgreSQL application-model parity. Worker tests exercise SIGTERM during current work and payload-free JSON errors.
-
-Local verification on 2026-11-15 also built both Docker images and started the full stack in an isolated Compose project. HTTPS readiness, real CSRF registration/login, production cookie attributes, authenticated governance/dashboard/analytics/audit/inbox endpoints, the nonsuperuser database role and clean worker SIGTERM exit were checked against PostgreSQL 18 with a temporary test certificate. These checks do not establish public hosting or certificate renewal.
 
 Run live PostgreSQL acceptance only against two deliberately empty disposable databases:
 

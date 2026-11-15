@@ -4,14 +4,8 @@ AgentConnect is a multi-company FastAPI/SQLAlchemy and React/TypeScript applicat
 
 The authentication foundation uses Argon2id passwords, HTTP-only server sessions, CSRF protection, persisted permission grants, team invitations and reviewed Alembic migrations. No authentication tokens are returned in JSON or stored in browser storage.
 
-- [Live Gemini setup and verification](docs/LIVE_GEMINI_REPORT.md)
-- [Final product report, implementation evidence and full demonstration](docs/PHASE3_REPORT.md)
-- [Production setup, PostgreSQL, backup and restore](docs/DEPLOYMENT.md)
-- [Technical interview guide](docs/INTERVIEW.md)
-- [Phase 1 completion report, verification and two-company scenario](docs/PHASE1_REPORT.md)
-- [Safe migrations and explicit legacy ownership mapping](docs/migrations.md)
-- [Phase 1 API contract](docs/phase1-contract.md)
-- [Earlier Phase 2 implementation report](docs/PHASE2_REPORT.md) (its original authentication/migration limitations are superseded by Phase 1)
+- [Production setup, PostgreSQL, backup and restore](deployment/README.md)
+- [Database migrations and explicit legacy ownership mapping](backend/migrations/README.md)
 
 ## Windows PowerShell setup and start
 
@@ -59,9 +53,9 @@ In another terminal run `cd frontend`, `npm ci`, then `npm run dev`.
 
 ## Database safety
 
-The checkout initially had no working SQLite file. An empty integration placeholder was backed up, verified, upgraded on a copy, then initialized through Alembic. No existing application records were reset.
+Fresh databases are initialized through Alembic. Existing databases use a verified backup and a successful copy upgrade before changes are applied; application records are preserved.
 
-For a populated older database, stop API/worker writers and follow [the migration guide](docs/migrations.md) before startup. The runner refuses unknown schemas or unmapped historical agents. Prepare an explicit agent-ID mapping; company display names never assign ownership. Backup files and checksum manifests are kept in the ignored `backend/data/migration-backups` directory. Original IDs, JSON, timestamps, statuses and relationships are verified on the copy and after applying.
+For a populated older database, stop API/worker writers and follow [the migration guide](backend/migrations/README.md) before startup. The runner refuses unknown schemas or unmapped historical agents. Prepare an explicit agent-ID mapping; company display names never assign ownership. Backup files and checksum manifests are kept in the ignored `backend/data/migration-backups` directory. Original IDs, JSON, timestamps, statuses and relationships are verified on the copy and after applying.
 
 Historical records mapped to `agentconnect-legacy` are isolated until an operator explicitly assigns an existing active account after reviewing the mapping:
 
@@ -72,7 +66,7 @@ Set-Location "$HOME\Music\agentConnect\backend"
 
 This local-only command creates a verified backup before granting ownership. It has no HTTP endpoint and does not infer a legal owner. The email above is an operator-selected existing account, not a built-in login.
 
-SQLite is supported for local use. PostgreSQL 18 initialization, actual backup/restore, schema parity and copy-first upgrades are tested with the optional driver in `backend/requirements-postgres.txt`. Existing PostgreSQL databases use `scripts/migrate_postgres.py` with a distinct empty restore database; see [deployment and recovery](docs/DEPLOYMENT.md). Changing a database URL does not transfer SQLite business data.
+SQLite is supported for local use. PostgreSQL 18 initialization, actual backup/restore, schema parity and copy-first upgrades are tested with the optional driver in `backend/requirements-postgres.txt`. Existing PostgreSQL databases use `scripts/migrate_postgres.py` with a distinct empty restore database; see [deployment and recovery](deployment/README.md). Changing a database URL does not transfer SQLite business data.
 
 ## Authentication and permissions
 
@@ -122,7 +116,7 @@ npm test
 npm run build
 ```
 
-Tests use temporary databases, real cookie authentication, fake model adapters and preserved legacy fixtures; no live Gemini calls. `npm run build` performs TypeScript checking before generating production assets. Current evidence and limitations are in the [final report](docs/PHASE3_REPORT.md). Provider tests are deterministic; an optional disposable PostgreSQL test is documented separately.
+Tests use temporary databases, real cookie authentication, fake model adapters and preserved legacy fixtures; no live Gemini calls. `npm run build` performs TypeScript checking before generating production assets. Provider tests are deterministic. Optional disposable PostgreSQL tests and their prerequisites are described in the [deployment guide](deployment/README.md).
 
 ## Security and operating boundaries
 

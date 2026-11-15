@@ -1,12 +1,13 @@
-# Verified SQLite upgrades
+# Database migrations
 
-The default `backend/data/` directory contained only `.gitkeep` when this work started. There was no working database to back up or migrate. The acceptance tests create temporary database copies under `/tmp`; no existing working database was reset.
+Database changes use frozen Alembic revisions and verified upgrade tooling. Existing SQLite files require a backup, a successful upgrade on a copy, integrity checks and historical-data checks before applying changes.
 
-`upgrade_database(engine, legacy_mapping=...)` initializes a fresh database through three frozen Alembic revisions:
+`upgrade_database(engine, legacy_mapping=...)` initializes a fresh database through four frozen Alembic revisions:
 
 1. `0001_day2`: the original eight historical tables, including their checks, unique constraints and relationships.
 2. `0002_phase2`: the nineteen existing product tables, retaining their original IDs and ownership.
 3. `0003_phase1`: company slugs/status, account status, roles/grants, settings, invitations, cookie session fields, and intrinsic company ownership of historical activity.
+4. `0004_governance`: approval requests, audit events and user notifications, preserving existing rows and importing pending legacy approval requests.
 
 The revisions do not import application models. Existing unstamped schemas must match the complete frozen Day 2 or Phase 2 definition before stamping. An unknown or partially changed schema is refused. A recorded revision with missing columns, constraints or indexes is also refused. Downgrades are refused because dropping these records would destroy data; recovery uses the verified backup.
 
@@ -49,20 +50,20 @@ Stop application and worker writers for an operational upgrade. The runner also 
 From `backend/` on Linux:
 
 ```bash
-../.venv/bin/python scripts/migrate.py --database data/agentconnect.db --mapping ../docs/legacy-mapping.example.json --backup-dir data/migration-backups
+../.venv/bin/python scripts/migrate.py --database data/agentconnect.db --mapping migrations/legacy-mapping.example.json --backup-dir data/migration-backups
 # Review the returned manifest and upgraded copy, then apply:
-../.venv/bin/python scripts/migrate.py --database data/agentconnect.db --mapping ../docs/legacy-mapping.example.json --backup-dir data/migration-backups --apply
+../.venv/bin/python scripts/migrate.py --database data/agentconnect.db --mapping migrations/legacy-mapping.example.json --backup-dir data/migration-backups --apply
 ```
 
 From `backend/` in Windows PowerShell:
 
 ```powershell
-..\.venv\Scripts\python.exe scripts\migrate.py --database data\agentconnect.db --mapping ..\docs\legacy-mapping.example.json --backup-dir data\migration-backups
-..\.venv\Scripts\python.exe scripts\migrate.py --database data\agentconnect.db --mapping ..\docs\legacy-mapping.example.json --backup-dir data\migration-backups --apply
+..\.venv\Scripts\python.exe scripts\migrate.py --database data\agentconnect.db --mapping migrations\legacy-mapping.example.json --backup-dir data\migration-backups
+..\.venv\Scripts\python.exe scripts\migrate.py --database data\agentconnect.db --mapping migrations\legacy-mapping.example.json --backup-dir data\migration-backups --apply
 ```
 
 Without `--apply`, only backup and dry-run artifacts are written. Each run produces a verified original backup, an upgraded dry-run copy, and a manifest containing only artifact paths, revision, row counts, aggregate checksums and integrity/FK check results. Data rows, emails, content, password hashes and tokens are not logged in that manifest. Backup and dry-run SQLite files necessarily contain original source data; they are created with owner-only file permissions on systems that support POSIX permissions. Protect their folder as database material.
 
 The same exact Alembic upgrade runs on the copy before it can run against the source. `PRAGMA integrity_check`, `PRAGMA foreign_key_check`, schema validation and historical-column checksums must pass. Every original row must retain its original column values, including raw JSON, IDs, statuses, timestamps, and relationships. The source transaction rolls back on a conversion or verification failure. A fresh empty database needs no backup; an existing pending file upgrade uses this verified path automatically, refusing unmapped historical agents.
 
-The SQLite runner above remains supported. Phase 3 also provides a PostgreSQL 18 runner with actual backup restoration into an explicitly supplied empty database before applying changes; see [DEPLOYMENT.md](DEPLOYMENT.md) for its supported baseline, commands and recovery limits. This does not automatically transfer an existing SQLite business database to PostgreSQL.
+The SQLite runner above remains supported. Phase 3 also provides a PostgreSQL 18 runner with actual backup restoration into an explicitly supplied empty database before applying changes; see [deployment and recovery](../../deployment/README.md) for its supported baseline, commands and recovery limits. This does not automatically transfer an existing SQLite business database to PostgreSQL.
