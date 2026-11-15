@@ -39,6 +39,14 @@ def create_app(
         if initialize_database:
             from app.db.migrations import upgrade_database
             upgrade_database(target_engine)
+            if not legacy_demo:
+                from app.db.seed import seed_agents, seed_demo_network
+                with target_sessions() as db:
+                    seed_agents(db)
+                    seed_demo_network(db)
+                from app.services.demo_csv import ingest_demo_csv
+                count = ingest_demo_csv(target_sessions)
+                logging.getLogger(__name__).info("demo_csv_ingested records=%d", count)
         yield
 
     application = FastAPI(title="AgentConnect API", version="3.0.0", lifespan=lifespan)

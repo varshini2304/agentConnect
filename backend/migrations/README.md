@@ -2,12 +2,15 @@
 
 Database changes use frozen Alembic revisions and verified upgrade tooling. Existing SQLite files require a backup, a successful upgrade on a copy, integrity checks and historical-data checks before applying changes.
 
-`upgrade_database(engine, legacy_mapping=...)` initializes a fresh database through four frozen Alembic revisions:
+`upgrade_database(engine, legacy_mapping=...)` initializes a fresh database through seven frozen Alembic revisions:
 
 1. `0001_day2`: the original eight historical tables, including their checks, unique constraints and relationships.
 2. `0002_phase2`: the nineteen existing product tables, retaining their original IDs and ownership.
 3. `0003_phase1`: company slugs/status, account status, roles/grants, settings, invitations, cookie session fields, and intrinsic company ownership of historical activity.
 4. `0004_governance`: approval requests, audit events and user notifications, preserving existing rows and importing pending legacy approval requests.
+5. `0005_demo_source_id`: historical revision adding legacy post source uniqueness.
+6. `0006_publication_sources`: source identity and provenance columns for managed publications.
+7. `0007_remove_legacy_post_source_uniqueness`: removes the legacy-post uniqueness index because repeatable demo scenarios may create multiple posts with the same source reference.
 
 The revisions do not import application models. Existing unstamped schemas must match the complete frozen Day 2 or Phase 2 definition before stamping. An unknown or partially changed schema is refused. A recorded revision with missing columns, constraints or indexes is also refused. Downgrades are refused because dropping these records would destroy data; recovery uses the verified backup.
 

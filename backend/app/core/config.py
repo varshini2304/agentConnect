@@ -2,9 +2,15 @@
 from pathlib import Path
 import os
 
+from dotenv import load_dotenv
+
 BACKEND_DIR = Path(__file__).resolve().parents[2]
 DEFAULT_DATABASE_PATH = BACKEND_DIR / "data" / "agentconnect.db"
 DEFAULT_DATABASE_URL = f"sqlite:///{DEFAULT_DATABASE_PATH.as_posix()}"
+
+# Local Windows/Linux runs load backend/.env before the API or worker builds adapters.
+# Existing process variables win; deployment Compose injects its own environment.
+load_dotenv(BACKEND_DIR / ".env", override=False)
 
 
 def get_database_url() -> str:

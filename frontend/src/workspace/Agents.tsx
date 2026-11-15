@@ -2,12 +2,11 @@ import { useEffect, useState, type FormEvent } from 'react'
 import { Link, useLocation, useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { apiErrorMessage } from '../api/client'
 import { Button, Card, PageHeading, Status, formatDate } from '../components/common/UI'
-import { get, post, put, remove } from './api'
-import { ActionNotice, Check, LimitsEditor, NoRows, RefreshButton, Resource, useAction, useResource } from './common'
-import { approvalCategories, companyIds, newConfig, phrases, readKnowledgeFile, validateConfig } from './domain'
-import { CategoryChoices } from './Governance'
+import { get, post, put, remove, upload } from './api'
+import { ActionNotice, Check, NoRows, RefreshButton, Resource, useAction, useResource } from './common'
+import { newConfig, phrases, readKnowledgeFile, validateConfig } from './domain'
 import { useSession } from './Session'
-import type { AgentConfig, Knowledge, KnowledgeInput, ManagedAgent, Platform, PublicAgent, Version } from './types'
+import type { AgentConfig, AgentDocumentDraft, Knowledge, KnowledgeInput, ManagedAgent, Platform, PublicAgent, Version } from './types'
 
 export function MyAgents() {
   const { can } = useSession()
@@ -29,11 +28,6 @@ const permissionFields: { key: keyof AgentConfig; label: string }[] = [{ key: 'd
 function PhraseField({ label, value, onChange }: { label: string; value: string[]; onChange: (value: string[]) => void }) {
   const [text, setText] = useState(value.join('\n'))
   return <label>{label}<textarea rows={4} value={text} onChange={event => { setText(event.target.value); onChange(phrases(event.target.value)) }} placeholder="One item per line" /><small className="muted">One item per line; keep each under 500 characters.</small></label>
-}
-function IdField({ label, value, onChange }: { label: string; value: string; onChange: (value: string) => void }) {
-  let error = ''
-  try { companyIds(value) } catch (reason) { error = apiErrorMessage(reason) }
-  return <label>{label}<input value={value} aria-invalid={Boolean(error)} onChange={event => onChange(event.target.value)} /><small className={error ? 'field-error' : 'muted'}>{error || 'Company IDs, separated by commas.'}</small></label>
 }
 export function ConfigPreview({ config }: { config: AgentConfig }) {
   const entries = [...listFields, ...discoveryFields, ...permissionFields]
@@ -63,58 +57,96 @@ export function AgentBuilder() {
   const resource = useResource(async () => {
     const platform = await get<Platform>('/platform')
     if (!agentId) return { platform, agent: null, config: newConfig(platform), knowledge: [] as Knowledge[] }
-    const [agent, versions, knowledge] = await Promise.all([get<ManagedAgent>(`/agents/${agentId}`), get<Version[]>(`/agents/${agentId}/versions`), can('knowledge.read') ? get<Knowledge[]>(`/agents/${agentId}/knowledge`) : Promise.resolve([])])
+    const [agent, versions, knowledge] = await Promise.all([
+      get<ManagedAgent>(`/agents/${agentId}`), get<Version[]>(`/agents/${agentId}/versions`),
+      can('knowledge.read') ? get<Knowledge[]>(`/agents/${agentId}/knowledge`) : Promise.resolve([]),
+    ])
     return { platform, agent, config: versions.find(version => version.id === versionId)?.config || agent.config, knowledge }
   }, [agentId, versionId])
-  return <><PageHeading eyebrow="Visual agent builder" title={agentId ? 'Create a configuration version' : 'Create a company agent'} description="Describe your business role in guided fields. Save a draft, review it, then activate from the agent profile." /><Resource resource={resource}>{data => <BuilderForm key={`${agentId || 'new'}:${versionId}`} initial={data.config} agent={data.agent} platform={data.platform} knowledge={data.knowledge} />}</Resource></>
+  return <><PageHeading eyebrow="Visual agent builder" title={agentId ? 'Edit agent profile' : 'Create a company agent'} description="Start with a short profile or upload a PDF, Word file, Markdown file, or image. Gemini drafts the profile and source notes for you to review." /><Resource resource={resource}>{data => <BuilderForm key={`${agentId || 'new'}:${versionId}`} initial={data.config} agent={data.agent} platform={data.platform} knowledge={data.knowledge} canManageKnowledge={can('knowledge.manage')} />}</Resource></>
 }
-function BuilderForm({ initial, agent, platform, knowledge }: { initial: AgentConfig; agent: ManagedAgent | null; platform: Platform; knowledge: Knowledge[] }) {
+function slugFromName(value: string) {
+  return value.normalize('NFKD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 80)
+}
+function BuilderForm({ initial, agent, platform, knowledge, canManageKnowledge }: { initial: AgentConfig; agent: ManagedAgent | null; platform: Platform; knowledge: Knowledge[]; canManageKnowledge: boolean }) {
   const navigate = useNavigate()
-  const { company, can } = useSession()
   const [config, setConfig] = useState<AgentConfig>(initial)
-  const [slug, setSlug] = useState(agent?.slug || '')
-  const [partners, setPartners] = useState(initial.partner_company_ids.join(', '))
-  const [blocked, setBlocked] = useState(initial.blocked_company_ids.join(', '))
+  const [slug, setSlug] = useState(agent?.slug || slugFromName(initial.name))
+  const [slugEdited, setSlugEdited] = useState(Boolean(agent))
   const [step, setStep] = useState(0)
   const [pending, setPending] = useState<KnowledgeInput[]>([])
   const [savedId, setSavedId] = useState<number | null>(agent?.id || null)
   const [error, setError] = useState('')
   const [busy, setBusy] = useState(false)
-  const steps = ['Identity', 'Responsibilities', 'Discovery', 'Collaboration', 'Knowledge', 'Runtime', 'Review']
+  const steps = ['Profile', 'Document and knowledge', 'Review']
   const update = <K extends keyof AgentConfig>(key: K, value: AgentConfig[K]) => setConfig(current => ({ ...current, [key]: value }))
+  const onDocumentDraft = (draft: AgentDocumentDraft, filename: string) => {
+    const { knowledge_text, ...profile } = draft
+    setConfig(current => ({ ...current, ...profile, provider: 'gemini', model: platform.providers.gemini?.[0] || current.model }))
+    if (!slugEdited) setSlug(slugFromName(profile.name))
+    if (canManageKnowledge) setPending(rows => [...rows, { name: filename, content: knowledge_text, visibility: 'private' }])
+    setError('')
+  }
   const save = async (event: FormEvent) => {
     event.preventDefault()
-    if (step < steps.length - 1) { setStep(step + 1); return }
-    let checked: AgentConfig
-    try { checked = { ...config, partner_company_ids: companyIds(partners), blocked_company_ids: companyIds(blocked) } } catch (reason) { setError(apiErrorMessage(reason)); return }
-    if (!agent && !savedId && !/^[a-zA-Z0-9]+(?:-[a-zA-Z0-9]+)*$/.test(slug)) { setError('Use letters, numbers and single hyphens for the agent handle.'); return }
-    const invalid = validateConfig(checked)
-    if (invalid) { setError(invalid); return }
+    if (step < steps.length - 1) { setStep(step + 1); setError(''); return }
+    if (!slug.trim()) { setError('Enter an agent handle.'); setStep(0); return }
+    const invalid = validateConfig(config)
+    if (invalid) { setError(invalid); setStep(0); return }
     setError(''); setBusy(true)
     let id = savedId
-    let current = checked
+    let versionId: number | null = null
+    let current = { ...config }
     try {
-      if (!id) { const created = await post<ManagedAgent>('/agents', { slug, config: current }); id = created.id; setSavedId(id) } else await put(`/agents/${id}/configuration`, { config: current })
+      if (!id) {
+        const created = await post<ManagedAgent>('/agents', { slug, config: current })
+        id = created.id; versionId = created.config_version_id; setSavedId(id)
+      } else {
+        const version = await put<Version>(`/agents/${id}/configuration`, { config: current })
+        versionId = version.id
+      }
       for (const input of pending) {
         const source = await post<Knowledge>(`/agents/${id}/knowledge`, input)
         current = { ...current, knowledge_source_ids: [...current.knowledge_source_ids, source.id] }
         setConfig(current); setPending(rows => rows.filter(row => row !== input))
       }
-      if (pending.length) await put(`/agents/${id}/configuration`, { config: current })
-      navigate(`/agents/${id}`, { replace: true, state: { notice: 'Draft configuration saved. Review and activate this version when ready.' } })
-    } catch (reason) { setError(`${apiErrorMessage(reason)}${id ? ` Draft agent #${id} is saved. Retry to finish the remaining changes.` : ''}`) } finally { setBusy(false) }
+      if (pending.length) {
+        const version = await put<Version>(`/agents/${id}/configuration`, { config: current })
+        versionId = version.id
+      }
+      if (!agent && id && versionId) {
+        await post(`/agents/${id}/lifecycle`, { state: 'active', version_id: versionId })
+      }
+      navigate(`/agents/${id}`, { replace: true, state: { notice: agent ? 'Agent configuration saved as a new draft version.' : 'Agent created and activated. Review its profile and attached source.' } })
+    } catch (reason) {
+      setError(`${apiErrorMessage(reason)}${id ? ` Agent #${id} is saved as a draft. Retry to finish the remaining steps.` : ''}`)
+    } finally { setBusy(false) }
   }
-  const fields = (items: typeof listFields) => items.map(field => <PhraseField key={field.key} label={field.label} value={config[field.key] as string[]} onChange={value => update(field.key, value as never)} />)
+  const setLines = (key: 'categories' | 'topics' | 'keywords', value: string[]) => update(key, value)
   return <div className="builder-layout"><nav className="builder-steps" aria-label="Builder progress">{steps.map((name, index) => <button type="button" key={name} className={index === step ? 'builder-step current' : 'builder-step'} aria-current={index === step ? 'step' : undefined} onClick={() => { setStep(index); setError('') }} disabled={busy}><span>{index + 1}</span>{name}</button>)}</nav><Card><form className="form-stack" onSubmit={event => void save(event)}><div className="section-header"><h2>{steps[step]}</h2><span className="muted">Step {step + 1} of {steps.length}</span></div>
-    {step === 0 && <><div className="form-grid"><label>Agent name<input required value={config.name} maxLength={160} onChange={event => update('name', event.target.value)} /></label><label>Agent handle<input required value={slug} disabled={Boolean(agent || savedId)} maxLength={80} pattern="[a-zA-Z0-9]+(-[a-zA-Z0-9]+)*" onChange={event => setSlug(event.target.value)} /><small className="muted">Letters, numbers and single hyphens. Unique in your company.</small></label><label>Avatar or initials<input value={config.avatar} maxLength={50} onChange={event => update('avatar', event.target.value)} /></label><label>Business domain<input required value={config.domain} maxLength={120} onChange={event => update('domain', event.target.value)} /></label></div><label>Role<input required value={config.role} maxLength={200} onChange={event => update('role', event.target.value)} /></label><label>Public description<textarea required rows={3} maxLength={2000} value={config.description} onChange={event => update('description', event.target.value)} /></label><label>Purpose<textarea required rows={3} maxLength={2000} value={config.purpose} onChange={event => update('purpose', event.target.value)} /></label></>}
-    {step === 1 && <div className="form-grid">{fields(listFields)}</div>}
-    {step === 2 && <><Check label="Discoverable in the network registry" checked={config.discoverable} onChange={value => update('discoverable', value)} detail="Requires an active version and company network participation." /><div className="form-grid">{fields(discoveryFields)}<IdField label="Preferred partner company IDs" value={partners} onChange={value => { setPartners(value); try { update('partner_company_ids', companyIds(value)) } catch { /* Keep invalid text visible until corrected. */ } }} /><IdField label="Blocked company IDs" value={blocked} onChange={value => { setBlocked(value); try { update('blocked_company_ids', companyIds(value)) } catch { /* Keep invalid text visible until corrected. */ } }} /></div></>}
-    {step === 3 && <><div className="form-grid"><Check label="Allow public network publishing" checked={config.allow_public} onChange={value => update('allow_public', value)} /><Check label="Allow direct conversations" checked={config.allow_direct} onChange={value => update('allow_direct', value)} /><Check label="Allow group conversations" checked={config.allow_group} onChange={value => update('allow_group', value)} /><Check label="Allow starting conversations" checked={config.allow_initiation ?? true} onChange={value => update('allow_initiation', value)} /><Check label="Allow invitations" checked={config.allow_invitations ?? true} onChange={value => update('allow_invitations', value)} /><Check label="Allow agent replies" checked={config.allow_replies ?? true} onChange={value => update('allow_replies', value)} /><Check label="Allow shareable knowledge in context" checked={config.allow_knowledge ?? true} onChange={value => update('allow_knowledge', value)} /><Check label="Require human approval for every reply" checked={config.require_approval} onChange={value => update('require_approval', value)} /></div><CategoryChoices label="Agent categories requiring approval" value={config.approval_categories || []} onChange={value => update('approval_categories', value)} /><fieldset className="plain-fieldset"><legend>Allowed agent actions</legend><div className="check-grid">{['reply', 'skip', 'request_approval', 'end_conversation'].map(value => <Check key={value} label={value.replaceAll('_', ' ')} checked={config.allowed_actions.includes(value)} onChange={enabled => update('allowed_actions', enabled ? [...config.allowed_actions, value] : config.allowed_actions.filter(item => item !== value))} />)}</div></fieldset><div className="form-grid">{fields(permissionFields)}<label>Tone<select value={config.tone} onChange={event => update('tone', event.target.value)}>{[...new Set(['professional', 'friendly', 'formal', 'technical', config.tone])].map(value => <option key={value}>{value}</option>)}</select></label><label>Response preferences<input value={config.response_preferences} maxLength={500} onChange={event => update('response_preferences', event.target.value)} placeholder="Concise, use bullets where useful" /></label></div></>}
-    {step === 4 && <><p className="body-copy">Private sources remain in this workspace. Conversation replies use only sources explicitly marked shareable. Sources must be selected in a configuration version to be used.</p>{knowledge.map(source => <Check key={source.id} label={`${source.name} · ${source.visibility}`} checked={config.knowledge_source_ids.includes(source.id)} onChange={enabled => update('knowledge_source_ids', enabled ? [...config.knowledge_source_ids, source.id] : config.knowledge_source_ids.filter(id => id !== source.id))} />)}{pending.map((input, index) => <div className="list-row" key={index}><span>{input.name}<small>{input.visibility} · added when draft is saved</small></span><Button type="button" onClick={() => setPending(pending.filter((_, i) => i !== index))}>Remove</Button></div>)}{can('knowledge.manage') ? <KnowledgeForm busy={busy} queue onAdd={async input => { setPending(rows => [...rows, input]) }} /> : <p className="info-notice">Your role cannot add knowledge sources.</p>}</>}
-    {step === 5 && <><div className="form-grid"><label>Provider<select required value={config.provider} onChange={event => setConfig({ ...config, provider: event.target.value, model: platform.providers[event.target.value]?.[0] || '' })}>{Object.entries(platform.providers).filter(([, models]) => models.length).map(([provider]) => <option key={provider} value={provider}>{provider}</option>)}</select></label><label>Model<select required value={config.model} onChange={event => update('model', event.target.value)}>{platform.providers[config.provider]?.map(model => <option key={model}>{model}</option>)}</select></label><label>Temperature<input type="number" min={0} max={1} step="any" required value={config.temperature} onChange={event => update('temperature', event.target.valueAsNumber)} /></label><label>Maximum output tokens<input type="number" min={64} max={2000} required value={config.max_output_tokens} onChange={event => update('max_output_tokens', event.target.valueAsNumber)} /></label></div>{!Object.values(platform.providers).some(models => models.length) && <p role="alert" className="form-error">No model providers are configured. Ask the server administrator to configure one before saving.</p>}<h3>Usage limits</h3><LimitsEditor value={config.limits} onChange={value => update('limits', value)} ceiling={platform.limits} /><p className="muted">Company policy and platform limits also apply. Company #{company.id}.</p></>}
-    {step === 6 && <><ConfigPreview config={config} />{pending.length > 0 && <p className="body-copy">Knowledge to attach: {pending.map(input => `${input.name} (${input.visibility})`).join(', ')}.</p>}<p className="info-notice">Saving creates a draft version. Activate only after reviewing the saved configuration on the agent profile.</p></>}
-    {error && <p role="alert" className="form-error">{error}</p>}<div className="builder-actions"><Button type="button" disabled={busy} onClick={() => step ? setStep(step - 1) : navigate('/agents')}>{step ? 'Back' : 'Cancel'}</Button><Button type="submit" className="button-primary" disabled={busy}>{busy ? 'Saving draft…' : step === steps.length - 1 ? 'Save draft version' : 'Continue'}</Button></div>
+    {step === 0 && <><div className="form-grid"><label>Agent name<input required value={config.name} maxLength={160} onChange={event => { update('name', event.target.value); if (!slugEdited) setSlug(slugFromName(event.target.value)) }} /></label><label>Agent handle<input required value={slug} disabled={Boolean(agent || savedId)} maxLength={80} pattern="[a-zA-Z0-9]+(-[a-zA-Z0-9]+)*" onChange={event => { setSlug(event.target.value); setSlugEdited(true) }} /><small className="muted">Generated from the name; unique in your company.</small></label><label>Business domain<input required value={config.domain} maxLength={120} onChange={event => update('domain', event.target.value)} /></label><label>Role<input required value={config.role} maxLength={200} onChange={event => update('role', event.target.value)} /></label></div><label>Public description<textarea required rows={3} maxLength={2000} value={config.description} onChange={event => update('description', event.target.value)} /></label><label>Purpose<textarea required rows={3} maxLength={2000} value={config.purpose} onChange={event => update('purpose', event.target.value)} /></label><div className="form-grid"><PhraseField label="Categories" value={config.categories} onChange={value => setLines('categories', value)} /><PhraseField label="Topics of interest" value={config.topics} onChange={value => setLines('topics', value)} /><PhraseField label="Matching keywords" value={config.keywords} onChange={value => setLines('keywords', value)} /></div></>}
+    {step === 0 && <Card><h3>Network visibility</h3><Check label="List this agent in the company network" checked={config.discoverable} onChange={value => update('discoverable', value)} detail="Other opted-in companies can find this agent in Agent registry." /><Check label="Allow public discovery and direct conversation requests" checked={config.allow_public} onChange={value => update('allow_public', value)} detail="Turn this on for Northstar if VS Softech should be able to find and contact it." /></Card>}
+    {step === 0 && <Card><h3>Publishing permissions</h3><PhraseField label="Allowed publishing categories" value={config.allowed_publishing_categories} onChange={value => update('allowed_publishing_categories', value)} /><p className="muted">The publication category must match one of these entries. For the example post, enter <strong>software integration</strong>.</p></Card>}
+    {step === 1 && <><p className="body-copy">Upload a business document. Gemini will read it and fill the profile fields above. Its extracted source notes are attached privately so the active agent can use them later. Review everything before creating the agent.</p>{canManageKnowledge ? <DocumentAgentGenerator busy={busy} onGenerated={onDocumentDraft} /> : <p className="info-notice">Your role cannot attach knowledge sources.</p>}{knowledge.length > 0 && <><h3>Existing sources</h3>{knowledge.map(source => <Check key={source.id} label={`${source.name} · ${source.visibility}`} checked={config.knowledge_source_ids.includes(source.id)} onChange={enabled => update('knowledge_source_ids', enabled ? [...config.knowledge_source_ids, source.id] : config.knowledge_source_ids.filter(id => id !== source.id))} />)}</>}{pending.map((input, index) => <div className="list-row" key={`${input.name}-${index}`}><span>{input.name}<small>Extracted notes · private · saved with the agent</small></span><Button type="button" onClick={() => setPending(rows => rows.filter((_, i) => i !== index))}>Remove</Button></div>)}{canManageKnowledge && <KnowledgeForm busy={busy} queue onAdd={async input => setPending(rows => [...rows, input])} />}</>}
+    {step === 2 && <><div className="profile-title"><span className="large-agent-avatar">{config.avatar || '🤖'}</span><div><h2>{config.name || 'Unnamed agent'}</h2><p className="muted">{config.role} · {config.domain}</p></div></div><p className="body-copy preserve-lines">{config.description}</p><div className="review-grid"><div><strong>Purpose</strong><p>{config.purpose}</p></div><div><strong>Categories</strong><p>{config.categories.join(', ') || 'None added'}</p></div><div><strong>Topics</strong><p>{config.topics.join(', ') || 'None added'}</p></div><div><strong>Knowledge</strong><p>{[...knowledge.filter(source => config.knowledge_source_ids.includes(source.id)).map(source => source.name), ...pending.map(source => source.name)].join(', ') || 'No sources selected'}</p></div><div><strong>Allowed publishing categories</strong><p>{config.allowed_publishing_categories.join(', ') || 'None allowed yet'}</p></div><div><strong>Runtime</strong><p>Gemini · {config.model} · safe company defaults</p></div><div><strong>Network visibility</strong><p>{config.discoverable && config.allow_public ? 'Listed for opted-in companies' : 'Hidden from the company registry'}</p></div></div><p className="info-notice">Review this profile and its private source notes. Creating activates the agent with company policy enforced.</p></>}
+    {error && <p role="alert" className="form-error">{error}</p>}<div className="builder-actions"><Button type="button" disabled={busy} onClick={() => step ? setStep(step - 1) : navigate(agent ? `/agents/${agent.id}` : '/agents')}>{step ? 'Back' : 'Cancel'}</Button><Button type="submit" className="button-primary" disabled={busy}>{busy ? 'Saving…' : step === steps.length - 1 ? (agent ? 'Save draft version' : 'Create and activate agent') : 'Continue'}</Button></div>
   </form></Card></div>
+}
+function DocumentAgentGenerator({ busy, onGenerated }: { busy: boolean; onGenerated: (draft: AgentDocumentDraft, filename: string) => void }) {
+  const [file, setFile] = useState<File | null>(null)
+  const [working, setWorking] = useState(false)
+  const [error, setError] = useState('')
+  const [notice, setNotice] = useState('')
+  const generate = async () => {
+    if (!file) return
+    setWorking(true); setError(''); setNotice('')
+    try {
+      const draft = await upload<AgentDocumentDraft>('/agents/generate-from-document', file)
+      onGenerated(draft, file.name)
+      setNotice('Gemini read the document. Profile fields and private source notes are ready to review.')
+    } catch (reason) { setError(apiErrorMessage(reason)) } finally { setWorking(false) }
+  }
+  return <div className="form-stack"><label>PDF, Word, Markdown, or image<input type="file" accept=".pdf,.docx,.md,.markdown,.png,.jpg,.jpeg,.webp,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,text/markdown,image/png,image/jpeg,image/webp" disabled={busy || working} onChange={event => { setFile(event.target.files?.[0] || null); setError(''); setNotice('') }} /><small className="muted">PDF, DOCX, Markdown, PNG, JPEG, or WebP. Up to 5 MB. Gemini will read it and draft the agent profile.</small></label>{error && <p role="alert" className="form-error">{error}</p>}{notice && <p role="status" className="success-notice">{notice}</p>}<Button type="button" className="button-primary" disabled={!file || busy || working} onClick={() => void generate()}>{working ? 'Reading document with Gemini…' : 'Generate profile from document'}</Button></div>
 }
 export function AgentProfile() {
   const { can } = useSession()
@@ -137,7 +169,7 @@ function AgentProfileContent({ agent, versions, knowledge, reload, loading }: { 
   useEffect(() => { setSelected(agent.config_version_id); setReviewed(false) }, [agent.config_version_id])
   const version = versions.find(row => row.id === selected)
   const lifecycle = (state: string) => { if (['disabled', 'archived'].includes(state) && !window.confirm(`${state === 'disabled' ? 'Disable' : 'Archive'} this agent and stop its future work?`)) return; void action.run(async () => { await post(`/agents/${agent.id}/lifecycle`, { state, ...(state === 'active' ? { version_id: selected } : {}) }); setReviewed(false); await reload() }, `Agent ${state === 'active' ? 'activated with the reviewed version' : state}.`) }
-  return <><PageHeading eyebrow={`@${agent.slug} · Agent #${agent.id}`} title={agent.config.name} description={`${agent.company_name} · Created ${formatDate(agent.created_at)}`} action={<div className="heading-actions"><Status value={agent.state} /><Link className="button" to={`/agents/${agent.id}/activity`}>Activity & runs</Link><RefreshButton reload={reload} loading={loading} /></div>} /><div className="profile-layout"><div className="form-stack"><Card><div className="section-header"><h2>Configuration preview</h2>{can('agents.manage') && <Link className="button button-small" to={`/agents/${agent.id}/edit?version=${selected}`}>Edit as new version</Link>}</div><div className="form-stack"><label>Version to review<select value={selected} onChange={event => { setSelected(Number(event.target.value)); setReviewed(false); action.clear() }}>{versions.map(row => <option key={row.id} value={row.id}>Version {row.version}{row.id === agent.active_version_id ? ' · active' : ''} · {formatDate(row.created_at)}</option>)}</select></label><ConfigPreview config={version?.config || agent.config} />{can('agents.manage') && <><Check label="I have reviewed this configuration and its sharing permissions" checked={reviewed} onChange={setReviewed} /><Button className="button-primary" disabled={!reviewed || action.busy || !version} onClick={() => lifecycle('active')}>Activate reviewed version</Button></>}<ActionNotice action={action} /></div></Card>
+  return <><PageHeading eyebrow={`@${agent.slug} · Agent #${agent.id}`} title={agent.config.name} description={`${agent.company_name} · Created ${formatDate(agent.created_at)}`} action={<div className="heading-actions"><Status value={agent.state} /><RefreshButton reload={reload} loading={loading} /></div>} /><div className="profile-layout"><div className="form-stack"><Card><div className="section-header"><h2>Configuration preview</h2>{can('agents.manage') && <Link className="button button-small" to={`/agents/${agent.id}/edit?version=${selected}`}>Edit as new version</Link>}</div><div className="form-stack"><label>Version to review<select value={selected} onChange={event => { setSelected(Number(event.target.value)); setReviewed(false); action.clear() }}>{versions.map(row => <option key={row.id} value={row.id}>Version {row.version}{row.id === agent.active_version_id ? ' · active' : ''} · {formatDate(row.created_at)}</option>)}</select></label><ConfigPreview config={version?.config || agent.config} />{can('agents.manage') && <><Check label="I have reviewed this configuration and its sharing permissions" checked={reviewed} onChange={setReviewed} /><Button className="button-primary" disabled={!reviewed || action.busy || !version} onClick={() => lifecycle('active')}>Activate reviewed version</Button></>}<ActionNotice action={action} /></div></Card>
       {(can('knowledge.read') || can('knowledge.manage')) && <Card><h2>Knowledge library</h2><p className="body-copy">Adding a source stores it in the library. Edit a configuration version to choose which sources the agent can use.</p>{knowledge.length ? knowledge.map(row => <div className="list-row" key={row.id}><span>{row.name}<small>#{row.id} · {row.visibility} · {formatDate(row.created_at)}</small></span><div className="inline-actions"><Button className="button-small" disabled={knowledgeAction.busy} onClick={() => void knowledgeAction.run(async () => setSource(await get<Knowledge>(`/agents/${agent.id}/knowledge/${row.id}`)), 'Source loaded.')}>View text</Button>{can('knowledge.manage') && <Button className="button-small button-danger" disabled={knowledgeAction.busy} onClick={() => { if (window.confirm(`Delete “${row.name}” from this agent's knowledge library?`)) void knowledgeAction.run(async () => { await remove(`/agents/${agent.id}/knowledge/${row.id}`); if (source?.id === row.id) setSource(null); await reload() }, 'Knowledge source deleted. Review configurations that referenced it.') }}>Delete</Button>}</div></div>) : <p className="muted">{can('knowledge.read') ? 'No knowledge sources yet.' : 'Your role cannot view the knowledge library.'}</p>}{source && <div className="knowledge-preview"><div className="section-header"><h3>{source.name}</h3><Button className="button-small" onClick={() => setSource(null)}>Close</Button></div><p className="preserve-lines body-copy">{source.content}</p></div>}{can('knowledge.manage') && <KnowledgeForm busy={knowledgeAction.busy} onAdd={async input => { const succeeded = await knowledgeAction.run(async () => { await post(`/agents/${agent.id}/knowledge`, input); await reload() }, 'Source added. Select it in a new configuration version.'); if (!succeeded) throw new Error('The source could not be added. See the error below.') }} />}<ActionNotice action={knowledgeAction} /></Card>}</div>
     <div className="form-stack">{can('agents.manage') && <Card><h2>Lifecycle controls</h2><p className="body-copy">Pause or disable to prevent further agent work. A saved draft does not change the active version.</p><div className="lifecycle-actions">{['draft', 'paused', 'disabled', 'archived'].map(state => <Button key={state} disabled={action.busy || agent.state === state} onClick={() => lifecycle(state)}>{state === 'draft' ? 'Return to draft' : state === 'paused' ? 'Pause agent' : state === 'disabled' ? 'Disable agent' : 'Archive agent'}</Button>)}</div><p className="muted">Active version ID: {agent.active_version_id || 'None'}</p></Card>}<Card><h2>Version history</h2>{versions.map(row => <button className={`version-row ${selected === row.id ? 'selected' : ''}`} key={row.id} onClick={() => { setSelected(row.id); setReviewed(false) }}><span>Version {row.version}<small>{formatDate(row.created_at)}</small></span><Status value={row.id === agent.active_version_id ? 'active' : 'draft'} /></button>)}</Card></div></div>
   </>

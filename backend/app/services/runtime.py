@@ -84,16 +84,19 @@ def publishing_reservations(db, agent_id):
     return db.scalar(select(func.count(PublishingJob.id)).where(PublishingJob.agent_id == agent_id, PublishingJob.status == "processing"))
 
 
-def claim_work(session_factory, now: datetime | None = None) -> Work | None:
+def claim_work(session_factory, now: datetime | None = None, *, delivery_id: int | None = None) -> Work | None:
     now = aware(now or utc_now())
     with session_factory() as db, db.begin():
         lock_runtime(db)
         recover_leases(db, now)
         from app.services.agent_runner import recover_legacy_runs
         recover_legacy_runs(db, now)
-        candidates = list(db.scalars(select(MessageDelivery).where(
+        candidates_query = select(MessageDelivery).where(
             MessageDelivery.status == "pending", MessageDelivery.available_at <= now,
-        ).order_by(MessageDelivery.id).limit(100)))
+        )
+        if delivery_id is not None:
+            candidates_query = candidates_query.where(MessageDelivery.id == delivery_id)
+        candidates = list(db.scalars(candidates_query.order_by(MessageDelivery.id).limit(100)))
         for delivery in candidates:
             msg = db.get(Message, delivery.message_id)
             conv = db.get(Conversation, msg.conversation_id)
@@ -224,7 +227,9 @@ def validate_reply(db, account, cfg, company, decision, source_content="", *, ac
         if decision.action == "reply":
             for version in (cfg, current):
                 topics = version.get("discussion_topics", [])
-                if topics and not any(_keyword_match(topic_text, topic) for topic in topics):
+                # Publication jobs are already restricted by allowed_publishing_categories;
+                # conversation discussion topics must not block an otherwise authorized post.
+                if action == "message.reply" and topics and not any(_keyword_match(topic_text, topic) for topic in topics):
                     raise PolicyViolationError()
                 if any(_keyword_match(topic_text, topic) for topic in version.get("excluded_topics", [])):
                     raise PolicyViolationError()
@@ -283,8 +288,15 @@ def finish_work(session_factory, work: Work, value=None, *, error=None, now=None
             delivery.error, attempt.error = error, error
             delivery.available_at = now + timedelta(seconds=min(60, 2 ** delivery.attempts))
             return True
+        requires_human_review = decision.action in ("reply", "request_approval") and needs_approval(db, cfg, account, company, decision, msg)
+        if conv.publication_id is not None and requires_human_review:
+            # Public-thread automation has no human review stage. Preserve every hard
+            # policy rejection above, and skip a reply when its configured review gate
+            # would otherwise require a person to approve it.
+            decision = RuntimeDecision(action="skip", reason="The reply requires human review, so the agent skipped it.")
+            requires_human_review = False
         run.action, run.reason = decision.action, decision.reason
-        if needs_approval(db, cfg, account, company, decision, msg) and decision.action in ("reply", "request_approval"):
+        if requires_human_review:
             legacy = RunApproval(run_id=run.id, conversation_id=conv.id, agent_id=account.id,
                                content=decision.content, reason=decision.reason)
             db.add(legacy)
@@ -341,10 +353,12 @@ def generate_bounded(adapter, work, *, system=SYSTEM):
     return value
 
 
-def run_once(session_factory, adapter=None, *, now=None) -> bool:
+def run_once(session_factory, adapter=None, *, now=None, delivery_id: int | None = None) -> bool:
     started = utc_now()
-    work = claim_work(session_factory, now)
+    work = claim_work(session_factory, now, delivery_id=delivery_id)
     if work is None:
+        if delivery_id is not None:
+            return False
         from app.services.publishing_runtime import run_publication_once
         return run_publication_once(session_factory, adapter, now=now)
     cfg = work.config

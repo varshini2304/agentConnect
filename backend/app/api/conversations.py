@@ -7,7 +7,7 @@ from app.api.dependencies import get_session
 from app.db.models import utc_now
 from app.db.network import (
     AgentAccount, AgentRun, AgentRunAttempt, Conversation, ConversationMember,
-    Invitation, Message, MessageDelivery, RunApproval,
+    Invitation, Message, MessageDelivery, Publication, RunApproval,
 )
 from app.schemas.network import AcceptInput, ConversationCreate, InvitationCreate, MemberInput, MessageCreate
 from app.services import conversations as service
@@ -74,13 +74,22 @@ def invite(conversation_id: int, payload: InvitationCreate, principal: Principal
     conv, _ = service.access(db, principal, conversation_id)
     invitation = service.propose_invitation(db, principal, conv, payload.inviter_agent_id, payload.recipient_agent_id)
     db.commit()
-    return invitation_data(invitation)
+    return invitation_data(invitation, db)
 
 
-def invitation_data(invitation):
+def invitation_data(invitation, db: Session):
+    conversation = db.get(Conversation, invitation.conversation_id)
+    opener = None
+    if conversation and conversation.kind == "direct":
+        opener = db.scalar(select(Message).where(
+            Message.conversation_id == conversation.id,
+            Message.sender_agent_id == invitation.inviter_agent_id,
+            Message.created_at >= invitation.created_at,
+        ).order_by(Message.sequence).limit(1))
     return {"id": invitation.id, "conversation_id": invitation.conversation_id,
             "inviter_agent_id": invitation.inviter_agent_id, "recipient_agent_id": invitation.recipient_agent_id,
-            "status": invitation.status, "requires_approval": invitation.requires_approval, "created_at": invitation.created_at}
+            "status": invitation.status, "requires_approval": invitation.requires_approval, "created_at": invitation.created_at,
+            "opening_message": opener.content if opener else None}
 
 
 @router.get("/invitations")
@@ -89,7 +98,7 @@ def invitations(principal: Principal = Depends(current_principal), db: Session =
     rows = db.scalars(select(Invitation).where(
         Invitation.inviter_agent_id.in_(owned_ids) | Invitation.recipient_agent_id.in_(owned_ids),
     ).order_by(Invitation.id.desc()))
-    return [invitation_data(i) for i in rows]
+    return [invitation_data(i, db) for i in rows]
 
 
 @router.post("/invitations/{invitation_id}/respond")
@@ -101,15 +110,22 @@ def respond(invitation_id: int, payload: AcceptInput, principal: Principal = Dep
     owner_agent(db, principal, invitation.recipient_agent_id)
     desired = "accepted" if payload.accept else "rejected"
     if invitation.status == desired:
-        return invitation_data(invitation)
+        return invitation_data(invitation, db)
     if invitation.status != "pending":
         raise HTTPException(409, "Invitation has already been resolved")
     if payload.accept:
         service.join_invitation(db, invitation, utc_now())
+        conversation = db.get(Conversation, invitation.conversation_id)
+        publication = db.get(Publication, conversation.publication_id) if conversation and conversation.publication_id else None
+        if publication and publication.status == "published" and publication.visibility == "network":
+            member = service.membership(db, conversation.id, invitation.inviter_agent_id)
+            if member:
+                service.enqueue_message(db, conversation, member, publication.content,
+                    f"publication-{publication.id}", publication.published_at or publication.created_at)
     else:
         invitation.status = "rejected"
     db.commit()
-    return invitation_data(invitation)
+    return invitation_data(invitation, db)
 
 
 @router.post("/conversations/{conversation_id}/leave")

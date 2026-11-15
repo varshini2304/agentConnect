@@ -122,7 +122,8 @@ def serialize_conversation(db: Session, conv: Conversation) -> dict:
                         "left_at": member.left_at, "history_from_seq": member.history_from_seq,
                         "config_version_id": member.config_version_id})
     return {"id": conv.id, "kind": conv.kind, "title": conv.title, "status": conv.status,
-            "created_at": conv.created_at, "members": members, "message_count": conv.message_count}
+            "created_at": conv.created_at, "publication_id": conv.publication_id,
+            "members": members, "message_count": conv.message_count}
 
 
 def serialize_message(db: Session, msg: Message, company_id: int) -> dict:
@@ -181,7 +182,12 @@ def join_invitation(db: Session, invitation: Invitation, now: datetime):
         db.add(member)
     member.status, member.joined_at, member.left_at = "active", now, None
     member.config_version_id = recipient.active_version_id
-    member.history_from_seq = conv.message_count + 1
+    # A direct conversation is explicitly addressed to this recipient, so its
+    # participants share the full conversation history from the start.
+    if conv.kind == "direct":
+        member.history_from_seq = 1
+    else:
+        member.history_from_seq = conv.message_count + 1
     invitation.status = "accepted"
     db.flush()
 
@@ -196,7 +202,11 @@ def propose_invitation(db: Session, principal: Principal, conv: Conversation, in
     if pending:
         return pending
     company = db.get(Company, recipient.company_id)
-    requires = company.policy.get("require_invitation_approval", True)
+    # Direct conversations are explicitly addressed by the initiating
+    # workspace. If both sides' direct-message policies allow participation,
+    # the recipient agent joins automatically; group invitations retain the
+    # recipient company's approval setting.
+    requires = conv.kind != "direct" and company.policy.get("require_invitation_approval", True)
     invitation = Invitation(conversation_id=conv.id, inviter_agent_id=inviter_id, recipient_agent_id=recipient_id, requires_approval=requires)
     db.add(invitation)
     db.flush()

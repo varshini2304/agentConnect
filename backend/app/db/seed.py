@@ -1,8 +1,14 @@
 ﻿"""Idempotent seed data for the five initial company agents."""
-from sqlalchemy import select
+import secrets
+
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from app.db.models import Agent, AgentInterest
+from app.db.models import Agent, AgentInterest, Post
+from app.db.network import AgentAccount, AgentVersion, Company, CompanyMember, CompanyRole, CompanySettings, User
+from app.schemas.network import AgentConfig, CompanyPolicy
+from app.services.security import hash_password, seed_roles
+from app.core.config import get_gemini_model
 
 SEED_AGENTS = (
     {
@@ -68,3 +74,58 @@ def seed_agents(db: Session) -> None:
                     agent_id=agent.id, interest_type=interest_type, value=value, weight=weight
                 ))
     db.commit()
+
+
+def seed_demo_network(db: Session) -> User | None:
+    """Provision the five bundled demo publishers only into a genuinely fresh database."""
+    if (db.scalar(select(func.count(Company.id))) or db.scalar(select(func.count(AgentAccount.id)))
+            or db.scalar(select(func.count(Agent.id)).where(Agent.company_id.is_not(None)))
+            or db.scalar(select(func.count(Post.id)))):
+        return None
+
+    user = db.scalar(select(User).where(User.email == "agentconnect-demo-service@invalid.local"))
+    if user is None:
+        user = User(email="agentconnect-demo-service@invalid.local", name="AgentConnect Demo Service",
+                    password_hash=hash_password(secrets.token_urlsafe(48)), status="active")
+        db.add(user)
+        db.flush()
+
+    categories = {
+        "swiggy": "merchant_promotion", "hdfc-bank": "banking", "flipkart": "retail_promotion",
+        "phonepe": "merchant_promotion", "shipping-corporation-of-india": "shipping_logistics",
+    }
+    definitions = {row["slug"]: row for row in SEED_AGENTS}
+    for slug in ("swiggy", "hdfc-bank", "flipkart", "phonepe", "shipping-corporation-of-india"):
+        definition = definitions[slug]
+        policy = CompanyPolicy(require_invitation_approval=False).model_dump()
+        company = Company(name=definition["company_name"], slug=slug, status="active",
+                          network_opt_in=True, policy=policy, policy_version=1)
+        db.add(company)
+        db.flush()
+        seed_roles(db, company)
+        owner_role = db.scalar(select(CompanyRole).where(CompanyRole.company_id == company.id, CompanyRole.slug == "owner"))
+        db.add_all([CompanySettings(company_id=company.id, industry=definition["industry"], onboarding_complete=True),
+                    CompanyMember(company_id=company.id, user_id=user.id, role="owner", role_id=owner_role.id)])
+
+        agent = db.scalar(select(Agent).where(Agent.slug == slug))
+        if agent is None or agent.company_id is not None:
+            db.rollback()
+            return None
+        agent.company_id = company.id
+        category = categories[slug]
+        config = AgentConfig(
+            name=definition["company_name"], description=definition["description"], role=definition["role"],
+            domain=definition["industry"], purpose=definition["description"],
+            categories=[item[1] for item in definition["interests"] if item[0] == "category"],
+            keywords=[item[1] for item in definition["interests"] if item[0] == "keyword"],
+            discoverable=True, allow_public=True, allow_direct=True, allow_group=True,
+            provider="gemini", model=get_gemini_model(), allowed_publishing_categories=[category],
+            discussion_topics=[item[1] for item in definition["interests"] if item[0] in ("category", "keyword")],
+        ).model_dump()
+        version = AgentVersion(agent_id=agent.id, version=1, config=config, created_by=user.id)
+        db.add(version)
+        db.flush()
+        db.add(AgentAccount(id=agent.id, company_id=company.id, slug=slug, state="active",
+                            active_version_id=version.id, config_version_id=version.id))
+    db.commit()
+    return user

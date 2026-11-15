@@ -18,8 +18,16 @@ def test_worker_sigterm_finishes_current_work_without_claiming_another(tmp_path,
     monkeypatch.setattr(sys, 'argv', ['worker'])
     completed = []
 
+    handlers = {}
+
+    def capture_signal(sig, handler):
+        handlers[sig] = handler
+        return signal.SIG_DFL
+
+    monkeypatch.setattr(worker.signal, 'signal', capture_signal)
+
     def complete(factory):
-        os.kill(os.getpid(), signal.SIGTERM)
+        handlers[signal.SIGTERM](signal.SIGTERM, None)
         completed.append('finished')
         return True
 

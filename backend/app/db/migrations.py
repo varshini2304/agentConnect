@@ -18,7 +18,7 @@ from sqlalchemy import DateTime, Engine, MetaData, create_engine, inspect, selec
 
 
 BACKEND = Path(__file__).resolve().parents[2]
-HEAD = '0004_governance'
+HEAD = '0007_remove_legacy_post_source_uniqueness'
 
 
 class MigrationError(RuntimeError):
@@ -83,7 +83,8 @@ def _upgrade(connection, legacy_mapping=None):
             raise MigrationError('Unrecognized existing schema; no tables were reset. Review its differences before stamping.')
         command.stamp(config, match)
     elif revision is not None:
-        if revision not in ('0001_day2', '0002_phase2', '0003_phase1', HEAD):
+        if revision not in ('0001_day2', '0002_phase2', '0003_phase1', '0004_governance',
+                            '0005_demo_source_id', '0006_publication_sources', HEAD):
             raise MigrationError('Unknown Alembic revision; operator review required.')
         if current_schema != _expected_schema(revision):
             raise MigrationError('Database schema differs from its recorded Alembic revision.')

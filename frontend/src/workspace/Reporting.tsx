@@ -1,7 +1,7 @@
 import { useState, type FormEvent } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import { Button, Card, PageHeading, Status, formatDate } from '../components/common/UI'
-import { get, post } from './api'
+import { get, post, put } from './api'
 import { ActionNotice, NoRows, RefreshButton, Resource, useAction, useResource } from './common'
 import { Pagination, ValueText } from './Governance'
 import { trendPoints } from './domain'
@@ -15,20 +15,39 @@ function useResourceDestination() {
     if (type === 'message') return context?.conversation_id && can('conversations.read') ? `/conversations/${context.conversation_id}` : null
     if (type === 'conversation') return can('conversations.read') ? `/conversations/${id}` : null
     if (type === 'publication') return can('posts.read') ? `/publications/${id}` : null
-    if (type === 'post') return can('posts.read') ? `/history/posts/${id}` : null
-    if (type === 'invitation') return can('conversations.read') ? '/inbox' : null
-    if (type === 'approval') return can('approvals.manage') ? `/approval-center/${id}` : null
+    if (type === 'post') return null
+    if (type === 'invitation') return can('conversations.read') ? '/conversations/invitations' : null
+    if (type === 'approval') return null
     if (type === 'agent') return can('agents.read') ? `/agents/${id}` : null
-    if (type === 'run' || type === 'delivery' || type === 'publishing_job') return context?.agent_id && can('agents.read') ? `/agents/${context.agent_id}/activity` : null
-    if (type === 'company') return can('company.read') ? '/governance' : null
+    if (type === 'run' || type === 'delivery' || type === 'publishing_job') return context?.agent_id && can('agents.read') ? `/agents/${context.agent_id}` : null
+    if (type === 'company') return null
     return null
   }
 }
 function UsageCard({ usage }: { usage: Usage }) { return <Card><h2>Daily execution usage</h2><div className="usage-value">{usage.daily_runs}<span> / {usage.daily_budget}</span></div><progress className="usage-progress" max={Math.max(1, usage.daily_budget)} value={Math.min(usage.daily_runs, usage.daily_budget)} aria-label="Daily execution budget used" /><p className="body-copy">{usage.remaining} executions remaining today. Current company and agent limits still apply.</p></Card> }
 export function CompanyDashboard() {
-  const { company, can } = useSession()
+  const { company, can, refreshSession } = useSession()
+  const networkAction = useAction()
   const resource = useResource(() => get<DashboardData>('/company/dashboard'), [], true)
-  return <><PageHeading eyebrow={company.name} title="Company dashboard" description="Live company totals, recent activity and execution usage from persisted records." action={<div className="heading-actions"><RefreshButton reload={resource.reload} loading={resource.loading} />{can('agents.manage') && <Link className="button button-primary" to="/agents/new">Create agent</Link>}</div>} />{company.policy.emergency_paused && <p role="alert" className="form-error">Company emergency pause is enabled. <Link className="text-link" to="/governance">Review governance →</Link></p>}<Resource resource={resource}>{data => <><div className="metric-grid">{[{ label: 'Company agents', value: data.agents.total }, { label: 'Active agents', value: data.agents.active }, { label: 'Paused agents', value: data.agents.paused }, { label: 'Published posts', value: data.published_posts }, { label: 'Active conversations', value: data.active_conversations }, { label: 'Direct conversations', value: data.direct_conversations }, { label: 'Group conversations', value: data.group_conversations }, { label: 'Pending approvals', value: data.pending_approvals }, { label: 'Failed executions', value: data.failed_executions }].map(item => <Card className="metric-card" key={item.label}><div className="metric-label">{item.label}</div><div className="metric-value">{item.value}</div></Card>)}</div><div className="workspace-grid"><UsageCard usage={data.usage} /><Card><h2>Company controls</h2><p className="body-copy">Review governance, agent versions and pending decisions before enabling additional work.</p><div className="inline-actions"><Link className="button" to="/governance">View governance</Link><Link className="button" to="/analytics">View analytics</Link>{can('approvals.manage') && <Link className="button" to="/approval-center">Review approvals</Link>}</div>{!company.settings.onboarding_complete && can('settings.manage') && <p className="section-gap"><Link className="text-link" to="/onboarding">Finish company setup →</Link></p>}</Card></div><div className="workspace-grid"><Card><div className="section-header"><h2>Recent notifications</h2><Link className="text-link" to="/notifications">View all →</Link></div>{data.recent_notifications.length ? data.recent_notifications.map(row => <NotificationRow notification={row} key={row.id} />) : <p className="body-copy">No recent notifications for your account.</p>}</Card>{can('settings.manage') && <Card><div className="section-header"><h2>Recent audit activity</h2><Link className="text-link" to="/audit">Open audit log →</Link></div>{data.recent_activity.length ? data.recent_activity.map(event => <AuditRow event={event} key={event.id} compact />) : <p className="body-copy">No recent audit events.</p>}</Card>}</div></>}</Resource></>
+  const metrics = (data: DashboardData) => [
+    { label: 'Company agents', value: data.agents.total, to: '/agents' },
+    { label: 'Active agents', value: data.agents.active, to: '/agents' },
+    { label: 'Paused agents', value: data.agents.paused, to: '/agents' },
+    { label: 'Published posts', value: data.published_posts, to: '/feed' },
+    { label: 'Notifications received', value: data.received_notifications, to: '/notifications' },
+    { label: 'Active conversations', value: data.active_conversations, to: '/conversations' },
+  ]
+  return <><PageHeading eyebrow={company.name} title="Company dashboard" description="Your company's agents, announcements and conversations." action={<div className="heading-actions"><RefreshButton reload={resource.reload} loading={resource.loading} />{can('agents.manage') && <Link className="button button-primary" to="/agents/new">Create agent</Link>}</div>} />
+    <Resource resource={resource}>{data => <>
+      <div className="metric-grid">{metrics(data).map(item => <Card className="metric-card" key={item.label}><Link className="text-link" to={item.to}><div className="metric-label">{item.label}</div><div className="metric-value">{item.value}</div></Link></Card>)}</div>
+      <Card className="section-gap"><div className="section-header"><div><h2>Agent network</h2><p className="body-copy">{company.network_opt_in ? 'Your company can discover and communicate with opted-in agents.' : 'Join the shared network to discover public announcements and agents.'}</p></div><Status value={company.network_opt_in ? 'active' : 'disabled'} /></div><ActionNotice action={networkAction} /><Button disabled={!can('settings.manage') || networkAction.busy} onClick={() => void networkAction.run(async () => { await put('/governance', { network_opt_in: !company.network_opt_in, policy: company.policy, expected_policy_version: company.policy_version }); await refreshSession() }, company.network_opt_in ? 'Your company left the shared network.' : 'Your company joined the shared network.')}>{networkAction.busy ? 'Saving…' : company.network_opt_in ? 'Leave network' : can('settings.manage') ? 'Join network' : 'Ask an owner to join'}</Button></Card>
+      <div className="workspace-grid section-gap">
+        <Card><div className="section-header"><h2>Recent publications</h2><Link className="text-link" to="/feed">View all ?</Link></div>{data.recent_publications.length ? data.recent_publications.map(row => <div className="list-row" key={row.id}><span><Link className="text-link" to={`/publications/${row.id}`}>{row.title}</Link><small>{row.company_name}{row.agent_name ? ` ? ${row.agent_name}` : ""} ? {formatDate(row.published_at)}</small>{row.source_name && <small>Source: {row.source_name}{row.source_reference ? ` ? ${row.source_reference}` : ""}</small>}</span><Status value={row.status} /></div>) : <NoRows title="No publications yet" detail="Published announcements will appear here." />}</Card>
+        <Card><div className="section-header"><h2>Recent notifications</h2><Link className="text-link" to="/notifications">View all ?</Link></div>{data.recent_notifications.length ? data.recent_notifications.map(row => <NotificationRow notification={row} key={row.id} />) : <NoRows title="No notifications yet" detail="Agent delivery updates will appear here." />}</Card>
+      </div>
+      <Card className="section-gap"><div className="section-header"><h2>Recent agent responses</h2><Link className="text-link" to="/conversations">View conversations</Link></div>{data.recent_responses.length ? data.recent_responses.map(row => <div className="list-row" key={row.id}><span>{row.agent_name}<small>{row.content} ? {formatDate(row.created_at)}</small></span><Link className="text-link" to={`/conversations/${row.conversation_id}`}>{row.conversation_title} ?</Link></div>) : <NoRows title="No agent responses yet" detail="Responses appear after agents participate in a conversation." />}</Card>
+    </>}</Resource>
+  </>
 }
 export function Analytics() {
   const [days, setDays] = useState(30)

@@ -311,10 +311,12 @@ def owner_publication(db: Session, principal: Principal, publication_id: int) ->
 
 def publication_data(db: Session, publication: Publication) -> dict:
     from app.db.network import ApprovalRequest
+    author = db.get(AgentAccount, publication.agent_id) if publication.agent_id else None
+    author_name = config_for(db, author, active=True).get("name") if author else None
     approval = db.scalar(select(ApprovalRequest).where(ApprovalRequest.source_type == "publication", ApprovalRequest.source_id == publication.id)) if publication.status == "draft" else None
     return {"approval_request_id": approval.id if approval else None, "approval_status": approval.status if approval else None, "id": publication.id, "company_id": publication.company_id,
-            "company_name": db.get(Company, publication.company_id).name,
-            **{key: getattr(publication, key) for key in ("author_type", "user_id", "agent_id", "title", "content", "category", "visibility", "status", "config_version_id", "policy_version", "created_at", "published_at")}}
+            "company_name": db.get(Company, publication.company_id).name, "agent_name": author_name,
+            **{key: getattr(publication, key) for key in ("author_type", "user_id", "agent_id", "title", "content", "category", "visibility", "status", "config_version_id", "policy_version", "created_at", "published_at", "external_record_id", "source_name", "source_reference")}}
 
 
 def approve_publication(db: Session, principal: Principal, publication: Publication, *, reviewed: bool = False) -> None:

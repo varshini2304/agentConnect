@@ -77,6 +77,12 @@ SYNONYMS: dict[str, tuple[str, ...]] = {
     "retail promotions": ("retail promotion",),
     "ecommerce": ("e-commerce", "online shopping"),
     "shipping logistics": ("shipping", "logistics"),
+    "integrations": ("integration", "software integration", "systems integration", "system integration", "api integration"),
+    "system integrations": ("system integration", "systems integration", "software integration", "api integration"),
+    "systems integration": ("system integration", "software integration", "api integration"),
+    "software integrations": ("software integration", "systems integration", "system integration", "api integration"),
+    "customer portals": ("customer portal", "portal"),
+    "partner portals": ("partner portal", "portal"),
 }
 
 
@@ -120,7 +126,9 @@ def evaluate_relevance(
         categories = [i.value for i in agent.interests if i.interest_type == "category"]
         keywords = [i.value for i in agent.interests if i.interest_type == "keyword"]
         exclusions = [i.value for i in agent.interests if i.interest_type == "exclude"]
-        matched_categories = sorted({value for value in categories if normalize(value) == normalize(post.category)})
+        matched_categories = sorted({value for value in categories
+                                     if normalize(value) == normalize(post.category)
+                                     or _keyword_match(normalize(post.category), value)})
         matched_keywords = sorted({value for value in keywords if _keyword_match(post_text, value)}, key=str.casefold)
         category_score = 1.0 if matched_categories else 0.0
         keyword_score = len(matched_keywords) / len(keywords) if keywords else 0.0

@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { NavLink, Outlet, useLocation } from 'react-router-dom'
-import { Bot, ChevronRight, Compass, Menu, MessageSquare, Settings, Users, X, Inbox, LayoutDashboard, LogOut, Shield, UserRound, History, Bell, BarChart3, CheckCircle2, FileText } from 'lucide-react'
+import { Bot, ChevronRight, Compass, Menu, MessageSquare, X, LayoutDashboard, LogOut, Bell, Users } from 'lucide-react'
 import { logout, switchCompany, useSession } from '../../workspace/Session'
 import { Button } from '../common/UI'
 import { useAction } from '../../workspace/common'
@@ -9,19 +9,8 @@ const links = [
   { to: '/agents', label: 'My agents', icon: Bot, permission: 'agents.read' },
   { to: '/registry', label: 'Agent registry', icon: Users, permission: 'discovery.read' },
   { to: '/feed', label: 'Publications', icon: Compass, permission: 'posts.read' },
-  { to: '/conversations', label: 'Conversations', icon: MessageSquare, permission: 'conversations.read' },
-  { to: '/inbox', label: 'Conversation invitations', icon: Inbox, permission: 'conversations.read' },
-  { to: '/approval-center', label: 'Approval center', icon: CheckCircle2, permission: 'approvals.manage' },
   { to: '/notifications', label: 'Notifications', icon: Bell, permission: '' },
-  { to: '/analytics', label: 'Analytics', icon: BarChart3, permission: 'company.read' },
-  { to: '/governance', label: 'Governance', icon: Shield, permission: 'company.read' },
-  { to: '/audit', label: 'Audit log', icon: FileText, permission: 'settings.manage' },
-  { to: '/history', label: 'Historical activity', icon: History, permission: 'posts.read' },
-  { to: '/team', label: 'Company team', icon: Users, permission: 'members.read', end: true },
-  { to: '/team/invitations', label: 'Company invitations', icon: Inbox, permission: 'invitations.manage' },
-  { to: '/roles', label: 'Roles & permissions', icon: Shield, permission: 'roles.read' },
-  { to: '/settings', label: 'Company settings', icon: Settings, permission: ['company.read', 'company.update', 'settings.manage'] },
-  { to: '/account', label: 'My account', icon: UserRound, permission: '' },
+  { to: '/conversations', label: 'Conversations', icon: MessageSquare, permission: 'conversations.read' },
 ]
 export function AppLayout() {
   const { session, company, can } = useSession()

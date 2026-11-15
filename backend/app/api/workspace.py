@@ -3,7 +3,7 @@ import re
 from typing import Annotated, Literal
 from urllib.parse import urlsplit
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, File, HTTPException, Request, UploadFile
 from pydantic import Field, StringConstraints, field_validator, model_validator
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
@@ -14,6 +14,7 @@ from app.core.config import get_gemini_model
 from app.db.models import utc_now
 from app.db.network import AgentAccount, AgentVersion, Company, DiscoveryRecord, KnowledgeSource, LoginSession, Publication, PublishingJob, User
 from app.schemas.network import AgentConfig, CompanyPolicy, StrictModel
+from app.schemas.agent_generation import AgentDocumentDraft
 from app.services import workspace as service
 from app.services.workspace import Principal, current_principal
 
@@ -97,6 +98,73 @@ def platform(request: Request, principal: Principal = Depends(current_principal)
     if service.fake_available(request):
         providers["fake"] = ["deterministic"]
     return {"providers": providers, "limits": service.platform_limits()}
+
+
+@router.post("/agents/generate-from-document", response_model=AgentDocumentDraft)
+async def generate_agent_from_document(document: UploadFile = File(...),
+                                      principal: Principal = Depends(current_principal),
+                                      db: Session = Depends(get_session)):
+    service.require_permission(db, principal, "agents.manage")
+    service.require_permission(db, principal, "knowledge.manage")
+    if not document.filename:
+        raise HTTPException(422, "Choose a document")
+    filename = document.filename.replace("\\", "/").rsplit("/", 1)[-1]
+    suffix = filename.rsplit(".", 1)[-1].casefold() if "." in filename else ""
+    content = await document.read(5 * 1024 * 1024 + 1)
+    await document.close()
+    if len(content) > 5 * 1024 * 1024:
+        raise HTTPException(413, "Documents must be 5 MB or smaller")
+    if suffix == "pdf" and content.startswith(b"%PDF-"):
+        mime_type, source = "application/pdf", content
+    elif suffix in ("png", "jpg", "jpeg", "webp") and content.startswith(b"\x89PNG\r\n\x1a\n"):
+        mime_type, source = "image/png", content
+    elif suffix in ("jpg", "jpeg") and content.startswith(b"\xff\xd8\xff"):
+        mime_type, source = "image/jpeg", content
+    elif suffix == "webp" and len(content) >= 12 and content[:4] == b"RIFF" and content[8:12] == b"WEBP":
+        mime_type, source = "image/webp", content
+    elif suffix in ("md", "markdown"):
+        try:
+            source = content.decode("utf-8-sig").strip()
+        except UnicodeDecodeError:
+            raise HTTPException(422, "Markdown must be saved as UTF-8 text") from None
+        if not source or len(source.encode("utf-8")) > 102400:
+            raise HTTPException(422, "Markdown must contain readable text and be 100 KB or smaller")
+        mime_type = "text/markdown"
+    elif suffix == "docx" and content.startswith(b"PK"):
+        try:
+            from io import BytesIO
+            from docx import Document
+            word = Document(BytesIO(content))
+            extracted = [paragraph.text for paragraph in word.paragraphs if paragraph.text.strip()]
+            extracted.extend(" | ".join(cell.text.strip() for cell in row.cells if cell.text.strip())
+                             for table in word.tables for row in table.rows)
+            source = "\n".join(text for text in extracted if text.strip())
+        except Exception:
+            raise HTTPException(422, "Could not read this Word document") from None
+        if not source.strip() or len(source.encode("utf-8")) > 102400:
+            raise HTTPException(422, "Word document must contain readable text and be 100 KB or smaller")
+        mime_type = "text/plain"
+    else:
+        raise HTTPException(415, "Choose a PDF, DOCX, Markdown, PNG, JPEG, or WebP file")
+    try:
+        from app.services.agent_generation import draft_agent_from_document
+        result = draft_agent_from_document(source, mime_type, principal.company.name)
+        if mime_type in ("text/markdown", "text/plain"):
+            result["knowledge_text"] = source
+    except RuntimeError as exc:
+        if str(exc) == "missing_api_key":
+            raise HTTPException(503, "Gemini is not configured. Check backend/.env and restart the API.") from None
+        raise HTTPException(502, "Gemini could not read this document. Try a clearer file.") from None
+    except Exception as exc:
+        code = getattr(exc, "code", None)
+        if code == 429:
+            raise HTTPException(429, "Gemini rate limit reached. Wait and try again.") from None
+        if code in (401, 403):
+            raise HTTPException(503, "Gemini rejected the configured key or model access.") from None
+        if code in (408, 504) or isinstance(exc, TimeoutError):
+            raise HTTPException(504, "Gemini timed out while reading the document. Try again.") from None
+        raise HTTPException(502, "Gemini could not read this document. Try a clearer file.") from None
+    return result
 
 
 @router.get("/agents")
@@ -223,6 +291,9 @@ def publications(principal: Principal = Depends(current_principal), db: Session 
 def add_publication(payload: PublicationInput, principal: Principal = Depends(current_principal), db: Session = Depends(get_session)):
     item = service.publish(db, principal, payload)
     commit(db)
+    from app.services.publication_workflow import enqueue_publication_workflow
+    enqueue_publication_workflow(db, principal, item)
+    commit(db)
     return service.publication_data(db, item)
 
 
@@ -239,6 +310,9 @@ def approve_publication(publication_id: int, principal: Principal = Depends(curr
     item = service.owner_publication(db, principal, publication_id)
     service.approve_publication(db, principal, item)
     commit(db)
+    from app.services.publication_workflow import enqueue_publication_workflow
+    enqueue_publication_workflow(db, principal, item)
+    commit(db)
     return service.publication_data(db, item)
 
 
@@ -252,7 +326,13 @@ def discover(publication_id: int, principal: Principal = Depends(current_princip
 
 @router.get("/publications/{publication_id}/discovery")
 def discovery(publication_id: int, principal: Principal = Depends(current_principal), db: Session = Depends(get_session)):
-    publication = service.owner_publication(db, principal, publication_id)
-    return [data for record in db.scalars(select(DiscoveryRecord).where(
-        DiscoveryRecord.publication_id == publication_id).order_by(DiscoveryRecord.agent_id))
+    publication = db.get(Publication, publication_id)
+    if publication is None or not service.publication_visible(db, principal, publication):
+        raise HTTPException(404, "Publication not found")
+    records_query = select(DiscoveryRecord).where(DiscoveryRecord.publication_id == publication_id)
+    if publication.company_id != principal.company.id:
+        # A recipient can see only the relevance evaluation for its own company.
+        records_query = records_query.where(DiscoveryRecord.company_id == principal.company.id)
+    records = db.scalars(records_query.order_by(DiscoveryRecord.agent_id))
+    return [data for record in records
         if (data := service.visible_discovery_data(db, principal, publication, record)) is not None]

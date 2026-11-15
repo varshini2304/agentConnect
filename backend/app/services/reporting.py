@@ -199,14 +199,37 @@ def dashboard(db, principal):
     permissions = granted(db, principal)
     audit = list(db.scalars(select(AuditEvent).where(AuditEvent.company_id == principal.company.id)
         .order_by(AuditEvent.created_at.desc(), AuditEvent.id.desc()).limit(8))) if "settings.manage" in permissions else []
+    from app.services.workspace import publication_data, publication_visible
+    visible_publications = [row for row in db.scalars(
+        select(Publication).order_by(Publication.published_at.desc(), Publication.id.desc()))
+        if publication_visible(db, principal, row) and row.status == "published"]
+    recent_publications = [publication_data(db, row) for row in visible_publications[:5]]
+    _, _, visible_conversations, visible_messages, _ = _authorized_rows(db, principal)
+    conversations_by_id = {row.id: row for row in visible_conversations}
+    agents_by_id = {row.id: row for row in accounts}
+    recent_responses = []
+    for message in reversed(visible_messages):
+        account = agents_by_id.get(message.sender_agent_id)
+        conversation = conversations_by_id.get(message.conversation_id)
+        if account and conversation and message.author_type == "agent":
+            recent_responses.append({"id": message.id, "conversation_id": conversation.id,
+                "conversation_title": conversation.title, "agent_id": account.id,
+                "agent_name": config_for(db, account, active=True).get("name", account.slug),
+                "content": message.content, "created_at": message.created_at})
+            if len(recent_responses) == 5:
+                break
+    received_notifications = notifications(db, principal)
     return {"agents": {"total": len(accounts), "active": counts["active"], "paused": counts["paused"]},
-        "published_posts": db.scalar(select(func.count(Publication.id)).where(Publication.company_id == principal.company.id, Publication.status == "published")),
+        "published_posts": len(visible_publications),
+        "received_notifications": len(received_notifications),
         "active_conversations": len(active), "direct_conversations": sum(c.kind == "direct" for c in active),
         "group_conversations": sum(c.kind == "group" for c in active),
         "pending_approvals": db.scalar(select(func.count(ApprovalRequest.id)).where(ApprovalRequest.company_id == principal.company.id, ApprovalRequest.status == "pending", ApprovalRequest.expires_at > utc_now())),
         "failed_executions": failed_runs + failed_jobs, "usage": usage(db, principal, accounts),
         "recent_activity": [audit_data(row) for row in audit],
-        "recent_notifications": [notification_data(db, row) for row in notifications(db, principal)[:8]]}
+        "recent_publications": recent_publications,
+        "recent_responses": recent_responses,
+        "recent_notifications": [notification_data(db, row) for row in received_notifications[:8]]}
 
 
 def analytics(db, principal, days):

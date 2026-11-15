@@ -160,7 +160,8 @@ class KnowledgeSource(Base):
 
 class Publication(Base):
     __tablename__ = "publications"
-    __table_args__ = (UniqueConstraint("company_id", "idempotency_key"), UniqueConstraint("company_id", "content_hash"))
+    __table_args__ = (UniqueConstraint("company_id", "idempotency_key"), UniqueConstraint("company_id", "content_hash"),
+                      Index("uq_publication_external_record", "company_id", "external_record_id", unique=True))
     id: Mapped[int] = mapped_column(primary_key=True)
     company_id: Mapped[int] = mapped_column(ForeignKey("companies.id"), index=True)
     author_type: Mapped[str] = mapped_column(String(16))
@@ -173,6 +174,9 @@ class Publication(Base):
     status: Mapped[str] = mapped_column(String(24), default="draft")
     idempotency_key: Mapped[str] = mapped_column(String(100))
     content_hash: Mapped[str] = mapped_column(String(64))
+    external_record_id: Mapped[str | None] = mapped_column(String(160))
+    source_name: Mapped[str | None] = mapped_column(String(160))
+    source_reference: Mapped[str | None] = mapped_column(String(500))
     config_version_id: Mapped[int | None] = mapped_column(ForeignKey("agent_versions.id"))
     policy_version: Mapped[int] = mapped_column()
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, index=True)

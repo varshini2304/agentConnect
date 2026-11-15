@@ -38,13 +38,13 @@ def _test_engine():
 def app_factory():
     engines = []
 
-    def create(response_adapter=None):
+    def create(response_adapter=None, legacy_demo=True):
         engine = _test_engine()
         engines.append(engine)
         return create_app(
             db_engine=engine,
             response_adapter=response_adapter or _default_test_adapter(),
-            legacy_demo=True,
+            legacy_demo=legacy_demo,
         )
 
     yield create
