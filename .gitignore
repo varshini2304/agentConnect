@@ -4,6 +4,7 @@
 **/__pycache__/
 /.pytest_cache/
 /backend/data/*.db
+/backend/data/*.log
 /backend/data/migration-backups/
 /backend/backups/
 *.db-wal
@@ -16,9 +17,20 @@
 /backend/.env
 /deployment/.env
 /deployment/certs/
+*.log
 
 # Local notes and development-tool caches
 /docs/
+!/docs/
+/docs/*
+!/docs/screenshots/
+/docs/screenshots/*
+!/docs/screenshots/login.png
+!/docs/screenshots/dashboard.png
+!/docs/screenshots/my-agents.png
+!/docs/screenshots/publications.png
+!/docs/screenshots/notifications.png
+!/docs/screenshots/conversations.png
 /.agents/
 /.codex/
 /.sf/
