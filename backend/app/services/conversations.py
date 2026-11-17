@@ -7,7 +7,7 @@ from sqlalchemy.orm import Session
 
 from app.db.models import utc_now
 from app.db.network import (
-    AgentAccount, AgentVersion, Company, Conversation, ConversationMember, Invitation,
+    AgentAccount, AgentRun, AgentVersion, Company, Conversation, ConversationMember, Invitation,
     KnowledgeSource, Message, MessageDelivery, Publication,
 )
 from app.services.workspace import (
@@ -131,10 +131,28 @@ def serialize_message(db: Session, msg: Message, company_id: int) -> dict:
     deliveries = list(db.scalars(select(MessageDelivery).join(AgentAccount, AgentAccount.id == MessageDelivery.agent_id).where(
         MessageDelivery.message_id == msg.id, AgentAccount.company_id == company_id,
     )))
+    thought_process = None
+    if msg.idempotency_key and msg.idempotency_key.startswith("delivery:"):
+        try:
+            deliv_id = int(msg.idempotency_key.split(":")[1])
+            run = db.scalar(select(AgentRun).where(AgentRun.delivery_id == deliv_id))
+            if run and run.reason:
+                thought_process = {
+                    "action": run.action or "reply",
+                    "reason": run.reason,
+                    "provider": run.provider or "gemini",
+                    "model": run.model or "gemini-2.5-flash",
+                    "status": run.status or "completed",
+                    "policy_version": run.policy_version,
+                    "created_at": run.created_at.isoformat() if run.created_at else None,
+                }
+        except (ValueError, IndexError):
+            pass
     return {"id": msg.id, "conversation_id": msg.conversation_id, "sequence": msg.sequence,
             "sender_agent_id": msg.sender_agent_id, "sender_user_id": msg.sender_user_id,
             "author_type": msg.author_type, "content": msg.content, "reply_depth": msg.reply_depth,
             "created_at": msg.created_at,
+            "thought_process": thought_process,
             "deliveries": [{"id": d.id, "agent_id": d.agent_id, "status": d.status,
                             "attempts": d.attempts, "error": d.error} for d in deliveries]}
 
@@ -177,14 +195,16 @@ def join_invitation(db: Session, invitation: Invitation, now: datetime):
     if len(active_members(db, conv.id)) >= maximum:
         fail(409, "Conversation participant limit reached")
     member = db.scalar(select(ConversationMember).where(ConversationMember.conversation_id == conv.id, ConversationMember.agent_id == recipient.id))
+    rejoining = member is not None
     if member is None:
         member = ConversationMember(conversation_id=conv.id, agent_id=recipient.id, config_version_id=recipient.active_version_id)
         db.add(member)
     member.status, member.joined_at, member.left_at = "active", now, None
     member.config_version_id = recipient.active_version_id
     # A direct conversation is explicitly addressed to this recipient, so its
-    # participants share the full conversation history from the start.
-    if conv.kind == "direct":
+    # initial participants share the full conversation history from the start.
+    # On re-joining after leaving, history starts from current messages.
+    if conv.kind == "direct" and not rejoining:
         member.history_from_seq = 1
     else:
         member.history_from_seq = conv.message_count + 1
@@ -202,11 +222,7 @@ def propose_invitation(db: Session, principal: Principal, conv: Conversation, in
     if pending:
         return pending
     company = db.get(Company, recipient.company_id)
-    # Direct conversations are explicitly addressed by the initiating
-    # workspace. If both sides' direct-message policies allow participation,
-    # the recipient agent joins automatically; group invitations retain the
-    # recipient company's approval setting.
-    requires = conv.kind != "direct" and company.policy.get("require_invitation_approval", True)
+    requires = (conv.publication_id is None) and company.policy.get("require_invitation_approval", True)
     invitation = Invitation(conversation_id=conv.id, inviter_agent_id=inviter_id, recipient_agent_id=recipient_id, requires_approval=requires)
     db.add(invitation)
     db.flush()

@@ -1,4 +1,4 @@
-﻿"""FastAPI app factory; optional Gemini configuration does not block startup."""
+"""FastAPI app factory; optional Gemini configuration does not block startup."""
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 import logging
@@ -39,7 +39,7 @@ def create_app(
         if initialize_database:
             from app.db.migrations import upgrade_database
             upgrade_database(target_engine)
-            if not legacy_demo:
+            if not legacy_demo and not os.getenv("PYTEST_CURRENT_TEST"):
                 from app.db.seed import seed_agents, seed_demo_network
                 with target_sessions() as db:
                     seed_agents(db)

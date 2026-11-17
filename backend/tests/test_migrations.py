@@ -300,7 +300,7 @@ def test_governance_upgrade_preserves_populated_phase1_and_dry_run(tmp_path):
     current = rows(engine)
     for table, records in original.items():
         assert current[table] == records
-    assert HEAD == '0007_remove_legacy_post_source_uniqueness'
+    assert HEAD == '0008_semantic_embeddings'
     assert verify_sqlite_file(path)['foreign_key_violations'] == 0
     assert rows(create_engine(f"sqlite:///{applied['backup']}")) == original
     assert 'unchanged-sensitive-hash' not in Path(applied['manifest']).read_text()

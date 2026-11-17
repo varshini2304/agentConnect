@@ -48,6 +48,99 @@ function describeSignal(value: unknown): string {
   if (value && typeof value === 'object') return Object.entries(value).map(([key, entry]) => `${key.replaceAll('_', ' ')}: ${describeSignal(entry)}`).join(' · ')
   return value === null || value === undefined ? 'None' : String(value)
 }
+
+
+function AgentReplyCard({ conversation, message, discovery }: { conversation: Conversation; message: Message; discovery?: Discovery }) {
+  const sender = conversation.members.find(m => m.agent_id === message.sender_agent_id)
+  const [showThought, setShowThought] = useState(true)
+  const tp = message.thought_process
+
+  return (
+    <article className="agent-reply-card">
+      <div className="agent-reply-header">
+        <div className="agent-reply-identity">
+          <div className="agent-reply-avatar">
+            {(sender?.agent_name || 'A').slice(0, 1)}
+          </div>
+          <div>
+            <div className="agent-reply-name-row">
+              <strong>{sender?.agent_name || 'Autonomous Agent'}</strong>
+              <span className="agent-reply-badge-autonomous">Autonomous Agent</span>
+              {tp?.model && (
+                <span className="agent-reply-badge-model">
+                  ⚡ {tp.model} ({tp.provider})
+                </span>
+              )}
+            </div>
+            <p className="agent-reply-meta">
+              {sender?.company_name || `Company #${sender?.company_id}`} · Agent #{message.sender_agent_id} · {formatDate(message.created_at)}
+            </p>
+          </div>
+        </div>
+
+        {discovery && (
+          <div className="agent-reply-score-badge" title={discovery.explanation}>
+            <span className="agent-reply-score-label">Relevance Match</span>
+            <span className="agent-reply-score-val">Score {discovery.score.toFixed(2)}</span>
+          </div>
+        )}
+      </div>
+
+      {discovery && (
+        <div className="agent-reply-relevance-bar">
+          <span className="relevance-pulse-dot" />
+          <span>
+            <strong>Matched via Hybrid Engine:</strong> {discovery.explanation}
+          </span>
+        </div>
+      )}
+
+      {tp?.reason && (
+        <div className="thought-process-container">
+          <div
+            className="thought-process-header"
+            onClick={() => setShowThought(!showThought)}
+            role="button"
+            tabIndex={0}
+            onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') setShowThought(!showThought) }}
+          >
+            <div className="thought-process-title">
+              <span className="thought-process-icon">🧠</span>
+              <strong>Agent Reasoning & Thought Process</strong>
+              <span className="thought-process-decision">Decision: {tp.action.toUpperCase()}</span>
+            </div>
+            <button type="button" className="thought-process-toggle">
+              {showThought ? 'Hide reasoning ▲' : 'Show reasoning ▼'}
+            </button>
+          </div>
+
+          {showThought && (
+            <div className="thought-process-body">
+              <p className="thought-process-text">
+                "{tp.reason}"
+              </p>
+              <div className="thought-process-footer">
+                <span>Evaluated against registered company policy, business domain & capability restrictions.</span>
+                <span className="thought-process-status">✓ Verified Autonomous Decision</span>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
+      <div className="agent-reply-response-container">
+        <div className="agent-reply-response-header">
+          <span className="agent-reply-response-label">💬 Autonomous Business Reply</span>
+          <Link className="agent-reply-thread-link" to={`/conversations/${conversation.id}`}>
+            Open full conversation thread →
+          </Link>
+        </div>
+        <p className="agent-reply-content preserve-lines">{message.content}</p>
+      </div>
+    </article>
+  )
+}
+
 export function PublicationDetails() {
   const { publicationId } = useParams()
   const [publishNotice, setPublishNotice] = useState('')
@@ -64,8 +157,83 @@ export function PublicationDetails() {
     }))
   }, [publicationId, company.id], true)
   const action = useAction()
+
   return <Resource resource={resource}>{publication => <><PageHeading eyebrow={`${publication.company_name} · Publication #${publication.id}`} title={publication.title} description={`${publication.author_type === 'human' ? 'Human authored' : 'Agent authored'} · ${formatDate(publication.created_at)}`} action={<Status value={publication.status} />} /><Card><div className="chip-list"><span className="category-chip">{publication.category}</span><span className="keyword-chip">{publication.visibility} audience</span></div><p className="publication-content preserve-lines">{publication.content}</p><p className="muted">Policy version {publication.policy_version}{publication.config_version_id ? ` · Agent configuration #${publication.config_version_id}` : ''}</p>{publication.status === 'draft' && publication.company_id === company.id && publication.approval_request_id && <div className="section-gap"><p className="info-notice">This draft requires governed review. Approval status: {publication.approval_status || 'pending'}.</p>{can('approvals.manage') ? <Link className="button button-primary" to={`/approval-center/${publication.approval_request_id}`}>Review publication approval</Link> : <p className="body-copy">A company approver must review this draft before it can publish.</p>}</div>}{publication.status === 'draft' && publication.company_id === company.id && !publication.approval_request_id && can('posts.publish') && <Button className="button-primary" disabled={action.busy} onClick={() => void action.run(async () => { const updated = await post<Publication>(`/publications/${publication.id}/publish`, {}); setPublishNotice(updated.status === 'published' ? 'Publication published.' : updated.approval_request_id ? 'Current policy requires governed review. Open the approval request below.' : `Publication status: ${updated.status}.`); await resource.reload() }, '')}>Approve & publish draft</Button>}<ActionNotice action={action} />{publishNotice && <p role="status" className="info-notice">{publishNotice}</p>}</Card>
-    {can('conversations.read') && <Resource resource={discussion}>{threads => { const replies = threads.flatMap(({ conversation, messages }) => messages.filter(message => message.sender_agent_id !== publication.agent_id).map(message => ({ conversation, message }))); return <Card className="section-gap"><div className="section-header"><div><h2>Replies</h2><p className="body-copy">Relevant agents analyze this post automatically. Their replies appear here.</p></div></div>{replies.length ? <div className="comment-list">{replies.map(({ conversation, message }) => { const sender = conversation.members.find(member => member.agent_id === message.sender_agent_id); return <article className="comment-preview" key={message.id}><div className="comment-avatar">{(sender?.agent_name || 'A').slice(0, 1)}</div><div><strong>{sender?.agent_name || 'Company agent'}</strong><p>{message.content}</p><small>{formatDate(message.created_at)} · <Link to={`/conversations/${conversation.id}`}>Open discussion</Link></small></div></article> })}</div> : <NoRows title="No agent replies yet" detail={threads.length ? 'The selected agents are processing the post.' : 'Replies appear after relevant agents are selected for a network post.'} />}{threads.length > 0 && <div className="section-gap">{threads.map(({ conversation }) => <div className="list-row" key={conversation.id}><span>{conversation.title}<small>{conversation.message_count} messages · {formatDate(conversation.created_at)}</small></span><div className="inline-actions"><Status value={conversation.status} /><Link className="text-link" to={`/conversations/${conversation.id}`}>Open discussion →</Link></div></div>)}</div>}</Card> }}</Resource>}
+    {can('conversations.read') && (
+      <Resource resource={discussion}>
+        {threads => {
+          const replies = threads.flatMap(({ conversation, messages }) =>
+            messages
+              .filter(message => message.sender_agent_id !== publication.agent_id)
+              .map(message => ({ conversation, message }))
+          )
+          const selectedAgents = discovery.data?.filter(d => d.selected) || []
+
+          return (
+            <Card className="section-gap">
+
+              <div className="section-header">
+                <div>
+                  <h2>Autonomous Agent Replies & Reasoning</h2>
+                  <p className="body-copy">
+                    Relevant agents analyze this post with their configured model and business policies. Their cognitive thought processes and replies appear below.
+                  </p>
+                </div>
+              </div>
+
+              {replies.length ? (
+                <div className="replies-stream">
+                  {replies.map(({ conversation, message }) => {
+                    const matchDiscovery = discovery.data?.find(
+                      d => d.agent_id === message.sender_agent_id
+                    )
+                    return (
+                      <AgentReplyCard
+                        key={message.id}
+                        conversation={conversation}
+                        message={message}
+                        discovery={matchDiscovery}
+                      />
+                    )
+                  })}
+                </div>
+              ) : (
+                <NoRows
+                  title="No agent replies yet"
+                  detail={
+                    threads.length
+                      ? 'The selected agents are actively processing the post.'
+                      : 'Replies appear after relevant agents are selected and process a network post.'
+                  }
+                />
+              )}
+
+              {threads.length > 0 && (
+                <div className="section-gap">
+                  <h3>Active Conversation Threads</h3>
+                  {threads.map(({ conversation }) => (
+                    <div className="list-row" key={conversation.id}>
+                      <span>
+                        {conversation.title}
+                        <small>
+                          {conversation.message_count} messages · {formatDate(conversation.created_at)}
+                        </small>
+                      </span>
+                      <div className="inline-actions">
+                        <Status value={conversation.status} />
+                        <Link className="text-link" to={`/conversations/${conversation.id}`}>
+                          Open discussion →
+                        </Link>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </Card>
+          )
+        }}
+      </Resource>
+    )}
     {can('discovery.read') && <section className="section-gap"><div className="section-header"><div><h2>{publication.company_id === company.id ? 'Discovery explanations' : 'Relevance to your agents'}</h2><p className="body-copy">{publication.company_id === company.id ? 'See which companies and agents matched this post.' : 'See the score and why this post matched each agent in this workspace.'}</p></div></div><Resource resource={discovery}>{rows => rows.length ? <div className="routing-list">{rows.map(row => <Card className={row.selected ? 'routing-card routing-selected' : 'routing-card'} key={row.agent_id}><div className="section-header"><div><h2>{row.agent_name}</h2><p className="muted">Company #{row.company_id} · Agent #{row.agent_id}</p></div><span className="score-pill">Score {row.score.toFixed(2)}</span></div><div className="chip-list"><Status value={row.eligible ? 'eligible' : 'excluded'} /><Status value={row.selected ? 'selected' : 'not_selected'} /></div><p className="body-copy">{row.explanation}</p>{!row.eligible && row.explanation === 'Excluded by topical policy' && <p className="muted">This agent’s configured interests did not match the post closely enough.</p>}{Object.keys(row.signals).length > 0 && <dl className="signal-list">{Object.entries(row.signals).map(([key, value]) => <div key={key}><dt>{key.replaceAll('_', ' ')}</dt><dd>{describeSignal(value)}</dd></div>)}</dl>}{publication.company_id !== company.id && row.selected && <p className="info-notice">Your agent was selected to analyze this post. Its response will appear in Replies below.</p>}</Card>)}</div> : <NoRows title="No relevance result yet" detail="Relevance is evaluated when a network post is published." />}</Resource></section>}
   </>}</Resource>
 }

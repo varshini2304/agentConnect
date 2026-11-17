@@ -1,13 +1,14 @@
-"""Database boundary for pure relevance scoring and explanation persistence."""
+"""Database boundary for hybrid relevance scoring and explanation persistence."""
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, selectinload
 
 from app.core.config import get_relevance_threshold, get_relevance_top_k
 from app.db.models import Agent, AgentRelationship, Post, RoutingDecision
+from app.services.embedding_service import default_embedding_service
 from app.services.relevance import (
     AgentProfile, Interest, PostProfile, Relationship, RelevanceConfig, ScoringResult,
-    evaluate_relevance,
+    evaluate_relevance, get_default_relevance_config,
 )
 
 
@@ -29,9 +30,29 @@ def evaluate_and_persist_routing(db: Session, post: Post) -> list[ScoringResult]
         AgentRelationship.source_agent_id.in_(owned_agents),
         AgentRelationship.target_agent_id.in_(owned_agents),
     )))
+
+    # Prepare embedding text for post and agents
+    post_text = default_embedding_service.text_for_post(post.title, post.category, post.content)
+    agent_embed_inputs = []
+    for agent in agents:
+        categories = [i.value for i in agent.interests if i.interest_type == "category"]
+        keywords = [i.value for i in agent.interests if i.interest_type == "keyword"]
+        agent_text = default_embedding_service.text_for_agent(
+            categories=categories,
+            keywords=keywords,
+            role=agent.role or "",
+            domain=agent.industry or "",
+            description=agent.description or "",
+        )
+        agent_embed_inputs.append((agent.id, agent_text))
+
+    batch_requests = [("post", post.id, post_text)] + [("agent", aid, atext) for aid, atext in agent_embed_inputs]
+    embeddings_map = default_embedding_service.get_or_create_embeddings_batch(db, batch_requests)
+    post_embedding = embeddings_map.get(("post", post.id))
+
     post_profile = PostProfile(
         id=post.id, author_agent_id=post.author_agent_id, title=post.title,
-        content=post.content, category=post.category,
+        content=post.content, category=post.category, embedding=post_embedding,
     )
     profiles = [
         AgentProfile(
@@ -40,6 +61,10 @@ def evaluate_and_persist_routing(db: Session, post: Post) -> list[ScoringResult]
                 Interest(item.interest_type, item.value, item.weight)
                 for item in agent.interests
             ),
+            embedding=embeddings_map.get(("agent", agent.id)),
+            role=agent.role or "",
+            domain=agent.industry or "",
+            description=agent.description or "",
         )
         for agent in agents
     ]
@@ -49,7 +74,7 @@ def evaluate_and_persist_routing(db: Session, post: Post) -> list[ScoringResult]
     ]
     results = evaluate_relevance(
         post_profile, profiles, relationship_profiles,
-        RelevanceConfig(get_relevance_threshold(), get_relevance_top_k()),
+        get_default_relevance_config(),
     )
     for result in results:
         db.add(RoutingDecision(

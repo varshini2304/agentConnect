@@ -1,4 +1,4 @@
-﻿"""Central configuration for the AgentConnect backend."""
+"""Central configuration for the AgentConnect backend."""
 from pathlib import Path
 import os
 
@@ -14,7 +14,10 @@ load_dotenv(BACKEND_DIR / ".env", override=False)
 
 
 def get_database_url() -> str:
-    return os.getenv("AGENTCONNECT_DATABASE_URL", DEFAULT_DATABASE_URL)
+    url = os.getenv("AGENTCONNECT_DATABASE_URL", DEFAULT_DATABASE_URL)
+    if url.startswith("sqlite:///./"):
+        return f"sqlite:///{(BACKEND_DIR / url[12:]).as_posix()}"
+    return url
 
 
 def get_relevance_threshold() -> float:
@@ -23,6 +26,30 @@ def get_relevance_threshold() -> float:
 
 def get_relevance_top_k() -> int:
     return max(0, int(os.getenv("AGENTCONNECT_RELEVANCE_TOP_K", "5")))
+
+
+def get_relevance_deterministic_weight() -> float:
+    return max(0.0, float(os.getenv("AGENTCONNECT_RELEVANCE_DETERMINISTIC_WEIGHT", "0.60")))
+
+
+def get_relevance_semantic_weight() -> float:
+    return max(0.0, float(os.getenv("AGENTCONNECT_RELEVANCE_SEMANTIC_WEIGHT", "0.40")))
+
+
+def get_relevance_semantic_match_threshold() -> float:
+    return min(1.0, max(0.0, float(os.getenv("AGENTCONNECT_RELEVANCE_SEMANTIC_MATCH_THRESHOLD", "0.20"))))
+
+
+def get_embedding_model_name() -> str:
+    return os.getenv("AGENTCONNECT_EMBEDDING_MODEL", "all-MiniLM-L6-v2").strip() or "all-MiniLM-L6-v2"
+
+
+def is_semantic_relevance_enabled() -> bool:
+    return os.getenv("AGENTCONNECT_SEMANTIC_RELEVANCE_ENABLED", "true").strip().lower() not in {"false", "0", "no"}
+
+
+def get_embedding_provider_name() -> str:
+    return os.getenv("AGENTCONNECT_EMBEDDING_PROVIDER", "auto").strip().lower()
 
 
 def get_gemini_api_key() -> str | None:

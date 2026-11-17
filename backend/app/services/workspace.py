@@ -11,16 +11,21 @@ from sqlalchemy import delete, select, update
 from sqlalchemy.orm import Session
 
 from app.api.dependencies import get_session
-from app.core.config import get_gemini_model, get_relevance_threshold, get_relevance_top_k
+from app.core.config import (
+    get_gemini_model, get_relevance_threshold, get_relevance_top_k,
+    get_relevance_deterministic_weight, get_relevance_semantic_weight,
+    get_relevance_semantic_match_threshold,
+)
 from app.db.models import Agent, utc_now
 from app.db.network import (
     AgentAccount, AgentVersion, Company, CompanyMember, DiscoveryRecord,
-    KnowledgeSource, LoginSession, Publication, RuntimeMutex, User,
+    KnowledgeSource, LoginSession, Publication, RuntimeMutex, StoredEmbedding, User,
 )
 from app.schemas.network import AgentConfig, CompanyPolicy, Limits
+from app.services.embedding_service import default_embedding_service
 from app.services.relevance import (
     AgentProfile, Interest, PostProfile, Relationship, RelevanceConfig,
-    evaluate_relevance, normalize,
+    evaluate_relevance, get_default_relevance_config, normalize,
 )
 
 
@@ -445,19 +450,49 @@ def discover(db: Session, principal: Principal, publication: Publication) -> lis
         interests = ([Interest("category", value) for value in config.get("categories", [])]
                      + [Interest("keyword", value) for value in dict.fromkeys(config.get("keywords", []) + config.get("topics", []))]
                      + [Interest("exclude", value) for value in config.get("excluded_topics", []) + db.get(Company, account.company_id).policy.get("excluded_topics", [])])
-        allowed.append(AgentProfile(account.id, config["name"], True, tuple(interests)))
+        agent_text = default_embedding_service.text_for_agent(
+            categories=config.get("categories", []),
+            keywords=config.get("keywords", []),
+            topics=config.get("topics", []),
+            role=config.get("role", ""),
+            domain=config.get("domain", ""),
+            description=config.get("description", ""),
+        )
+        allowed.append((account.id, config["name"], tuple(interests), agent_text))
+
+    post_text = default_embedding_service.text_for_post(publication.title, publication.category, publication.content)
+    embed_requests = [("publication", publication.id, post_text)] + [("agent", aid, atext) for aid, _, _, atext in allowed]
+    embeddings_map = default_embedding_service.get_or_create_embeddings_batch(db, embed_requests)
+    post_embedding = embeddings_map.get(("publication", publication.id))
+
+    agent_profiles = [
+        AgentProfile(
+            id=aid,
+            name=aname,
+            active=True,
+            interests=interests,
+            embedding=embeddings_map.get(("agent", aid)),
+        )
+        for aid, aname, interests, _ in allowed
+    ]
+
     relationships = [Relationship(publication.agent_id or 0, account.id, "partner")
                      for account, config in configs.values() if principal.company.id in config.get("partner_company_ids", [])]
-    scored = evaluate_relevance(PostProfile(publication.id, publication.agent_id or 0, publication.title, publication.content, publication.category),
-                                allowed, relationships, RelevanceConfig(get_relevance_threshold(), get_relevance_top_k()))
+
+    rel_config = get_default_relevance_config()
+    scored = evaluate_relevance(PostProfile(publication.id, publication.agent_id or 0, publication.title, publication.content, publication.category, embedding=post_embedding),
+                                agent_profiles, relationships, rel_config)
     records = denied + [DiscoveryRecord(publication_id=publication.id, agent_id=result.agent_id,
                                        company_id=configs[result.agent_id][0].company_id, agent_name=result.agent_name,
                                        eligible=result.eligible, selected=result.selected, score=result.final_score,
                                        explanation=("Excluded by topical policy" if not result.eligible else result.explanation),
                                        signals=({"category": result.category_score, "keyword": result.keyword_score,
-                                                 "relationship": result.relationship_score} if result.eligible else {}),
+                                                 "relationship": result.relationship_score, "deterministic": result.deterministic_score,
+                                                 "semantic": result.semantic_score, "hybrid": result.final_score} if result.eligible else {}),
                                        audit_json={"stage": "relevance", **result.to_dict(),
-                                                   "threshold": get_relevance_threshold(), "top_k": get_relevance_top_k(),
+                                                   "threshold": rel_config.threshold, "top_k": rel_config.top_k,
+                                                   "deterministic_weight": rel_config.deterministic_weight,
+                                                   "semantic_weight": rel_config.semantic_weight,
                                                    "config_version_id": configs[result.agent_id][0].active_version_id,
                                                    "company_policy_version": db.get(Company, configs[result.agent_id][0].company_id).policy_version}) for result in scored]
     db.execute(delete(DiscoveryRecord).where(DiscoveryRecord.publication_id == publication.id))

@@ -199,6 +199,23 @@ class DiscoveryRecord(Base):
     audit_json: Mapped[dict] = mapped_column(JSON, default=dict)
 
 
+class StoredEmbedding(Base):
+    __tablename__ = "stored_embeddings"
+    __table_args__ = (
+        UniqueConstraint("entity_type", "entity_id", "model_name", name="uq_stored_embeddings_entity"),
+        Index("ix_stored_embeddings_lookup", "entity_type", "entity_id"),
+        Index("ix_stored_embeddings_hash", "entity_type", "content_hash"),
+    )
+    id: Mapped[int] = mapped_column(primary_key=True)
+    entity_type: Mapped[str] = mapped_column(String(32), index=True)
+    entity_id: Mapped[int] = mapped_column(Integer, index=True)
+    model_name: Mapped[str] = mapped_column(String(100))
+    content_hash: Mapped[str] = mapped_column(String(64), index=True)
+    embedding: Mapped[list] = mapped_column(JSON)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, onupdate=utc_now)
+
+
 class PublishingJob(Base):
     """An authorized publishing brief; the agent independently proposes content or skips."""
     __tablename__ = "publishing_jobs"
